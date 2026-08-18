@@ -1,0 +1,17 @@
+# Go
+backend-go/meeting.db
+backend-go/meeting_server.log
+backend-go/server
+backend-go/uploads/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/frontend_server.log
+frontend/.env
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+Thumbs.db

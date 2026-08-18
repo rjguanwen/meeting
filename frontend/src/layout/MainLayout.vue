@@ -1,0 +1,139 @@
+<template>
+  <el-container class="layout">
+    <el-aside width="220px" class="aside">
+      <div class="logo">
+        <el-icon :size="24"><Monitor /></el-icon>
+        <span>技术会议系统</span>
+      </div>
+      <el-menu
+        :default-active="$route.path"
+        router
+        background-color="#001529"
+        text-color="rgba(255,255,255,0.68)"
+        active-text-color="#ffffff"
+      >
+        <el-menu-item index="/dashboard">
+          <el-icon><HomeFilled /></el-icon>
+          <span>首页</span>
+        </el-menu-item>
+        <template v-if="auth.isAdmin">
+          <el-menu-item index="/orgs">
+            <el-icon><OfficeBuilding /></el-icon>
+            <span>组织管理</span>
+          </el-menu-item>
+          <el-menu-item index="/users">
+            <el-icon><User /></el-icon>
+            <span>账号管理</span>
+          </el-menu-item>
+          <el-menu-item index="/logs">
+            <el-icon><Document /></el-icon>
+            <span>操作日志</span>
+          </el-menu-item>
+        </template>
+        <el-menu-item index="/meetings">
+          <el-icon><Calendar /></el-icon>
+          <span>会议管理</span>
+        </el-menu-item>
+      </el-menu>
+    </el-aside>
+
+    <el-container>
+      <el-header class="header">
+        <div class="page-title">{{ pageTitle }}</div>
+        <el-dropdown @command="onCommand">
+          <span class="user-info">
+            <el-avatar :size="30" class="avatar">{{ avatarText }}</el-avatar>
+            <span class="name">{{ auth.user?.name || auth.user?.username }}</span>
+            <el-tag size="small" :type="auth.isAdmin ? 'danger' : 'success'">
+              {{ auth.isAdmin ? '管理员' : '组织负责人' }}
+            </el-tag>
+            <el-icon><ArrowDown /></el-icon>
+          </span>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </el-header>
+      <el-main class="main">
+        <router-view />
+      </el-main>
+    </el-container>
+  </el-container>
+</template>
+
+<script setup>
+import { computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessageBox } from 'element-plus'
+import { useAuthStore } from '../stores/auth'
+
+const route = useRoute()
+const router = useRouter()
+const auth = useAuthStore()
+
+const pageTitle = computed(() => route.meta.title || '')
+const avatarText = computed(() => (auth.user?.name || auth.user?.username || '?').charAt(0))
+
+function onCommand(cmd) {
+  if (cmd === 'logout') {
+    ElMessageBox.confirm('确定退出登录吗？', '提示', { type: 'warning' })
+      .then(() => {
+        auth.logout()
+        router.push('/login')
+      })
+      .catch(() => {})
+  }
+}
+</script>
+
+<style scoped>
+.layout {
+  height: 100vh;
+}
+.aside {
+  background: #001529;
+  display: flex;
+  flex-direction: column;
+}
+.logo {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+}
+.el-menu {
+  border-right: none;
+  flex: 1;
+}
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #fff;
+  border-bottom: 1px solid #eee;
+}
+.page-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  outline: none;
+}
+.avatar {
+  background: #409eff;
+}
+.main {
+  background: #f5f7fa;
+  overflow: auto;
+}
+</style>
