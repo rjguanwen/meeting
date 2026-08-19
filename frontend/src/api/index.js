@@ -114,6 +114,7 @@ export const conclusionApi = {
 export const minutesApi = {
   get: (meetingId) => api.get(`/meetings/${meetingId}/minutes`),
   generate: (meetingId) => api.post(`/meetings/${meetingId}/minutes`),
+  update: (meetingId, content) => api.patch(`/meetings/${meetingId}/minutes`, { content }),
 }
 
 // ===== 操作日志 =====

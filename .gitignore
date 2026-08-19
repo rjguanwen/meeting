@@ -3,6 +3,7 @@ backend-go/meeting.db
 backend-go/meeting_server.log
 backend-go/server
 backend-go/uploads/
+backend-go/.env
 
 # Node
 frontend/node_modules/
@@ -15,6 +16,10 @@ frontend/.env
 .vscode/
 *.swp
 Thumbs.db
+
+# 环境变量
+.env
+!.env.example
 
 # 编写生成的可执行文件
 *.exe

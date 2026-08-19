@@ -150,18 +150,37 @@
                   size="small"
                   type="primary"
                   :icon="DocumentChecked"
-                  :disabled="!canGenerateMinutes"
+                  :disabled="!canGenerateMinutes || editingMinutes"
                   @click="generateMinutes"
                 >
                   {{ minutesBtnText }}
                 </el-button>
               </span>
             </el-tooltip>
-            <el-button v-if="minutes.content" size="small" type="success" @click="downloadMinutes">下载 .md</el-button>
+            <el-button v-if="canEditMinutes" size="small" type="warning" :icon="Edit" @click="startEditMinutes">
+              编辑纪要
+            </el-button>
+            <template v-if="editingMinutes">
+              <el-button size="small" type="primary" :icon="Check" :loading="savingMinutes" @click="saveMinutes">
+                保存
+              </el-button>
+              <el-button size="small" @click="cancelEditMinutes">取消</el-button>
+            </template>
+            <el-button v-if="minutes.content && !editingMinutes" size="small" type="success" @click="downloadMinutes">
+              下载 .md
+            </el-button>
           </div>
         </div>
       </template>
-      <div v-if="minutes.content" class="minutes" v-html="renderedMinutes"></div>
+      <div v-if="minutes.content && !editingMinutes" class="minutes" v-html="renderedMinutes"></div>
+      <el-input
+        v-else-if="editingMinutes"
+        v-model="editContent"
+        type="textarea"
+        :rows="20"
+        class="minutes-editor"
+        placeholder="会议纪要（Markdown 格式）"
+      />
       <el-empty v-else description="会议纪要尚未生成" :image-size="60" />
     </el-card>
 
@@ -185,7 +204,16 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Setting, Document, DocumentChecked, VideoPlay, VideoPause, FolderChecked } from '@element-plus/icons-vue'
+import {
+  Setting,
+  Document,
+  DocumentChecked,
+  Edit,
+  Check,
+  VideoPlay,
+  VideoPause,
+  FolderChecked,
+} from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { marked } from 'marked'
 import { meetingApi, itemApi, conclusionApi, minutesApi, orgApi } from '../api'
@@ -207,6 +235,9 @@ const orgTree = ref([])
 const orgDialog = ref(false)
 const selectedOrgs = ref([])
 const savingOrgs = ref(false)
+const editingMinutes = ref(false)
+const editContent = ref('')
+const savingMinutes = ref(false)
 
 const statusText = computed(
   () => ({ draft: '筹备中', ongoing: '进行中', finished: '已结束', archived: '已归档' })[meeting.value?.status] || '',
@@ -287,6 +318,12 @@ const minutesDisabledTip = computed(() => {
   return ''
 })
 
+// 纪要编辑权限：会议结束后（进行中/已结束）可编辑，归档后只读；仅管理员
+const canEditMinutes = computed(() => {
+  const st = meeting.value?.status
+  return auth.isAdmin && (st === 'ongoing' || st === 'finished') && !!minutes.value.content
+})
+
 function fmtTime(t) {
   if (!t) return '—'
   return t.slice(0, 16).replace('T', ' ')
@@ -314,6 +351,28 @@ async function generateMinutes() {
   await minutesApi.generate(meetingId)
   ElMessage.success('会议纪要已生成')
   await load()
+}
+
+function startEditMinutes() {
+  editContent.value = minutes.value.content
+  editingMinutes.value = true
+}
+
+function cancelEditMinutes() {
+  editingMinutes.value = false
+  editContent.value = ''
+}
+
+async function saveMinutes() {
+  savingMinutes.value = true
+  try {
+    await minutesApi.update(meetingId, editContent.value)
+    ElMessage.success('会议纪要已保存')
+    await load()
+  } finally {
+    editingMinutes.value = false
+    savingMinutes.value = false
+  }
 }
 
 async function startMeeting() {
@@ -495,6 +554,11 @@ onMounted(load)
   max-height: 560px;
   overflow: auto;
   color: #303133;
+}
+.minutes-editor {
+  font-family: 'JetBrains Mono', Consolas, Monaco, monospace;
+  font-size: 13px;
+  line-height: 1.7;
 }
 .minutes :deep(h1),
 .minutes :deep(h2),

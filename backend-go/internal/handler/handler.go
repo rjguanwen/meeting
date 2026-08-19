@@ -64,6 +64,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	admin.POST("/meetings/:id/orgs", h.SetMeetingOrgs)
 	admin.POST("/meetings/:id/material", h.GenerateMaterial)
 	admin.POST("/meetings/:id/minutes", h.GenerateMinutes)
+	admin.PATCH("/meetings/:id/minutes", h.UpdateMinutes)
 	admin.POST("/meetings/:id/start", h.StartMeeting)
 	admin.POST("/meetings/:id/finish", h.FinishMeeting)
 	admin.POST("/meetings/:id/archive", h.ArchiveMeeting)

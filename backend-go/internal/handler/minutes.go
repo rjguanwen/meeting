@@ -130,7 +130,12 @@ func (h *Handler) GetMinutes(c *gin.Context) {
 		return
 	}
 	var minutes model.MeetingMinutes
-	if err := h.db.Where("meeting_id = ?", id).Order("id desc").First(&minutes).Error; err != nil {
+	if err := h.db.Where("meeting_id = ?", id).Order("id desc").Limit(1).Find(&minutes).Error; err != nil {
+		fail(c, http.StatusInternalServerError, "查询会议纪要失败")
+		return
+	}
+	if minutes.ID == 0 {
+		// 未生成纪要时返回空对象，避免 GORM First 的 ErrRecordNotFound 日志噪音
 		c.JSON(http.StatusOK, model.MeetingMinutes{MeetingID: uint(id)})
 		return
 	}
@@ -180,5 +185,50 @@ func (h *Handler) GenerateMinutes(c *gin.Context) {
 		return
 	}
 	h.logRecord(c, model.LogMinutes, "meeting", meeting.ID, "生成会议纪要："+meeting.Title)
+	c.JSON(http.StatusOK, minutes)
+}
+
+// UpdateMinutes PATCH /api/meetings/:id/minutes 编辑会议纪要（会议结束后可编辑，归档后只读）
+func (h *Handler) UpdateMinutes(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		badRequest(c, "会议 ID 不合法")
+		return
+	}
+	var meeting model.Meeting
+	if err := h.db.First(&meeting, id).Error; err != nil {
+		notFound(c, "会议不存在")
+		return
+	}
+	if meeting.Status == model.MeetingArchived {
+		badRequest(c, "会议已归档，纪要只读")
+		return
+	}
+	if meeting.Status == model.MeetingDraft {
+		badRequest(c, "会议开始后才能编辑会议纪要")
+		return
+	}
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, "请求参数不合法")
+		return
+	}
+	var minutes model.MeetingMinutes
+	if err := h.db.Where("meeting_id = ?", id).Order("id desc").Limit(1).Find(&minutes).Error; err != nil {
+		fail(c, http.StatusInternalServerError, "查询会议纪要失败")
+		return
+	}
+	if minutes.ID == 0 {
+		badRequest(c, "纪要尚未生成，不能编辑")
+		return
+	}
+	minutes.Content = req.Content
+	if err := h.db.Save(&minutes).Error; err != nil {
+		fail(c, http.StatusInternalServerError, "保存会议纪要失败")
+		return
+	}
+	h.logRecord(c, model.LogMinutes, "meeting", meeting.ID, "编辑会议纪要："+meeting.Title)
 	c.JSON(http.StatusOK, minutes)
 }

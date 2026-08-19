@@ -167,6 +167,7 @@ type MeetingMinutes struct {
 	MeetingID uint      `gorm:"index;not null" json:"meeting_id"`
 	Content   string    `gorm:"type:text" json:"content"`
 	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // OperationLog 操作日志。记录登录与关键操作，供管理员查询。
