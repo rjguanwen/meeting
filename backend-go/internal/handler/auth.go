@@ -89,3 +89,45 @@ func (h *Handler) Me(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, toUserOut(&user))
 }
+
+type changePasswordReq struct {
+	OldPassword string `json:"old_password" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required"`
+}
+
+// ChangePassword PATCH /api/auth/password 修改本人密码（所有登录用户，需验证原密码）
+func (h *Handler) ChangePassword(c *gin.Context) {
+	var req changePasswordReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, "参数不合法："+err.Error())
+		return
+	}
+	if len(req.NewPassword) < 6 {
+		badRequest(c, "新密码至少 6 位")
+		return
+	}
+	if req.OldPassword == req.NewPassword {
+		badRequest(c, "新密码不能与原密码相同")
+		return
+	}
+	ctx := currentUser(c)
+	var user model.User
+	if err := h.db.First(&user, ctx.ID).Error; err != nil {
+		notFound(c, "用户不存在")
+		return
+	}
+	if !user.CheckPassword(req.OldPassword) {
+		badRequest(c, "原密码错误")
+		return
+	}
+	if err := user.SetPassword(req.NewPassword); err != nil {
+		fail(c, http.StatusInternalServerError, "设置密码失败")
+		return
+	}
+	if err := h.db.Save(&user).Error; err != nil {
+		fail(c, http.StatusInternalServerError, "保存密码失败")
+		return
+	}
+	h.logRecord(c, model.LogPasswordChange, "user", user.ID, "修改密码："+user.Username)
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}

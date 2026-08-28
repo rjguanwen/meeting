@@ -38,6 +38,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	// 需要登录
 	user := api.Group("", h.auth.RequireUser())
 	user.GET("/auth/me", h.Me)
+	user.PATCH("/auth/password", h.ChangePassword)
 	user.GET("/meetings", h.ListMeetings)
 	user.GET("/meetings/:id", h.GetMeeting)
 	user.GET("/meetings/:id/items", h.ListItems)

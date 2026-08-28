@@ -223,6 +223,7 @@ const (
 	LogRoomCreate     = "room.create"
 	LogRoomUpdate     = "room.update"
 	LogRoomDelete     = "room.delete"
+	LogPasswordChange = "password.change"
 )
 
 // WithOrganizationTree 将组织列表按部门-小组组装为树。

@@ -44,6 +44,7 @@ export const authApi = {
     return api.post('/auth/login', form)
   },
   me: () => api.get('/auth/me'),
+  changePassword: (data) => api.patch('/auth/password', data),
 }
 
 // ===== 组织 =====
