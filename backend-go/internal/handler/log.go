@@ -61,7 +61,8 @@ func clientIP(c *gin.Context) string {
 
 // ListLogs GET /api/logs 操作日志查询（管理员）
 // 支持：keyword（用户名/详情模糊）、action（动作类型）、target_type（目标类型）、
-//       start/end（时间范围）、page/page_size（分页，默认 20）。
+//
+//	start/end（时间范围）、page/page_size（分页，默认 20）。
 func (h *Handler) ListLogs(c *gin.Context) {
 	keyword := strings.TrimSpace(c.Query("keyword"))
 	action := strings.TrimSpace(c.Query("action"))

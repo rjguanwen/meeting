@@ -41,7 +41,16 @@ func (h *Handler) ListAttachments(c *gin.Context) {
 		return
 	}
 	ctx := currentUser(c)
-	if ctx.Role == model.RoleLeader && (ctx.OrgID == nil || *ctx.OrgID != item.OrgID) {
+	var meeting model.Meeting
+	if err := h.db.First(&meeting, item.MeetingID).Error; err != nil {
+		notFound(c, "会议不存在")
+		return
+	}
+	if !h.meetingVisible(ctx.Role, ctx.OrgID, &meeting) {
+		forbidden(c, "无权查看该会议附件")
+		return
+	}
+	if model.IsOrgRole(ctx.Role) && (ctx.OrgID == nil || *ctx.OrgID != item.OrgID) {
 		forbidden(c, "无权查看其他组织的附件")
 		return
 	}
@@ -77,7 +86,11 @@ func (h *Handler) UploadAttachment(c *gin.Context) {
 		return
 	}
 	ctx := currentUser(c)
-	if ctx.Role == model.RoleLeader {
+	if !h.meetingVisible(ctx.Role, ctx.OrgID, &meeting) {
+		forbidden(c, "保密会议仅参会组织负责人可操作")
+		return
+	}
+	if model.IsOrgRole(ctx.Role) {
 		if ctx.OrgID == nil || *ctx.OrgID != item.OrgID {
 			forbidden(c, "只能为本人所属组织的汇报事项上传附件")
 			return
@@ -169,7 +182,11 @@ func (h *Handler) DeleteAttachment(c *gin.Context) {
 		return
 	}
 	ctx := currentUser(c)
-	if ctx.Role == model.RoleLeader {
+	if !h.meetingVisible(ctx.Role, ctx.OrgID, &meeting) {
+		forbidden(c, "保密会议仅参会组织负责人可操作")
+		return
+	}
+	if model.IsOrgRole(ctx.Role) {
 		if ctx.OrgID == nil || *ctx.OrgID != item.OrgID {
 			forbidden(c, "只能删除本人所属组织的汇报事项附件")
 			return
@@ -202,7 +219,16 @@ func (h *Handler) GetAttachmentFile(c *gin.Context) {
 		return
 	}
 	ctx := currentUser(c)
-	if ctx.Role == model.RoleLeader {
+	var meeting model.Meeting
+	if err := h.db.First(&meeting, item.MeetingID).Error; err != nil {
+		notFound(c, "会议不存在")
+		return
+	}
+	if !h.meetingVisible(ctx.Role, ctx.OrgID, &meeting) {
+		forbidden(c, "无权查看该会议附件")
+		return
+	}
+	if model.IsOrgRole(ctx.Role) {
 		if ctx.OrgID == nil || *ctx.OrgID != item.OrgID {
 			forbidden(c, "无权查看其他组织的附件")
 			return

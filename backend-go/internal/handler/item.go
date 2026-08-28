@@ -25,8 +25,17 @@ func (h *Handler) ListItems(c *gin.Context) {
 		return
 	}
 	ctx := currentUser(c)
+	var meeting model.Meeting
+	if err := h.db.First(&meeting, id).Error; err != nil {
+		notFound(c, "会议不存在")
+		return
+	}
+	if !h.meetingVisible(ctx.Role, ctx.OrgID, &meeting) {
+		forbidden(c, "无权查看该会议内容")
+		return
+	}
 	q := h.db.Preload("Org").Preload("Creator").Where("meeting_id = ?", id)
-	if ctx.Role == model.RoleLeader {
+	if model.IsOrgRole(ctx.Role) {
 		if ctx.OrgID == nil {
 			c.JSON(http.StatusOK, []model.ReportItem{})
 			return
@@ -64,7 +73,13 @@ func (h *Handler) CreateItem(c *gin.Context) {
 		return
 	}
 	ctx := currentUser(c)
-	if ctx.Role == model.RoleLeader {
+	if !h.meetingVisible(ctx.Role, ctx.OrgID, &meeting) {
+		forbidden(c, "保密会议仅参会组织负责人可操作")
+		return
+	}
+	// 会议创建者可为其创建的会议录入汇报（可挂任意参会组织）
+	isCreator := meeting.CreatorID == ctx.ID
+	if model.IsOrgRole(ctx.Role) && !isCreator {
 		if ctx.OrgID == nil || *ctx.OrgID != req.OrgID {
 			forbidden(c, "只能为本人所属组织录入汇报事项")
 			return
@@ -113,7 +128,11 @@ func (h *Handler) UpdateItem(c *gin.Context) {
 		return
 	}
 	ctx := currentUser(c)
-	if ctx.Role == model.RoleLeader {
+	if !h.meetingVisible(ctx.Role, ctx.OrgID, &meeting) {
+		forbidden(c, "保密会议仅参会组织负责人可操作")
+		return
+	}
+	if model.IsOrgRole(ctx.Role) {
 		if ctx.OrgID == nil || *ctx.OrgID != item.OrgID {
 			forbidden(c, "只能修改本人所属组织的汇报事项")
 			return
@@ -124,7 +143,7 @@ func (h *Handler) UpdateItem(c *gin.Context) {
 		badRequest(c, "参数不合法："+err.Error())
 		return
 	}
-	if ctx.Role == model.RoleLeader {
+	if model.IsOrgRole(ctx.Role) {
 		req.OrgID = item.OrgID
 	}
 	item.Title = req.Title
@@ -158,7 +177,11 @@ func (h *Handler) DeleteItem(c *gin.Context) {
 		return
 	}
 	ctx := currentUser(c)
-	if ctx.Role == model.RoleLeader {
+	if !h.meetingVisible(ctx.Role, ctx.OrgID, &meeting) {
+		forbidden(c, "保密会议仅参会组织负责人可操作")
+		return
+	}
+	if model.IsOrgRole(ctx.Role) {
 		if ctx.OrgID == nil || *ctx.OrgID != item.OrgID {
 			forbidden(c, "只能删除本人所属组织的汇报事项")
 			return

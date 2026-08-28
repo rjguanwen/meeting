@@ -34,6 +34,50 @@ func (h *Handler) ListUsers(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// validateUserRole 校验角色合法性及组织绑定关系，返回错误信息（空串表示合法）。
+func (h *Handler) validateUserRole(role string, orgID *uint, excludeUserID uint) string {
+	switch role {
+	case model.RoleAdmin:
+		if orgID != nil {
+			return "管理员不需要绑定所属组织"
+		}
+		return ""
+	case model.RoleDeptLeader, model.RoleTeamLeader:
+		if orgID == nil {
+			return "负责人必须指定所属组织"
+		}
+		var org model.Organization
+		if err := h.db.First(&org, *orgID).Error; err != nil {
+			return "所属组织不存在"
+		}
+		// 部门负责人须绑定部门，小组负责人须绑定小组
+		want := model.OrgTypeDept
+		if role == model.RoleTeamLeader {
+			want = model.OrgTypeTeam
+		}
+		if org.Type != want {
+			if role == model.RoleDeptLeader {
+				return "部门负责人必须选择部门"
+			}
+			return "小组负责人必须选择小组"
+		}
+		// 一个部门/小组可设置多个负责人，无需唯一性校验
+		_ = excludeUserID
+		return ""
+	case model.RoleMember:
+		if orgID == nil {
+			return "组织成员必须指定所属组织"
+		}
+		var org model.Organization
+		if err := h.db.First(&org, *orgID).Error; err != nil {
+			return "所属组织不存在"
+		}
+		return ""
+	default:
+		return "角色只能是 admin / dept_leader / team_leader / member"
+	}
+}
+
 // CreateUser POST /api/users 创建用户（管理员）
 func (h *Handler) CreateUser(c *gin.Context) {
 	var req userReq
@@ -52,14 +96,10 @@ func (h *Handler) CreateUser(c *gin.Context) {
 	}
 	role := req.Role
 	if role == "" {
-		role = model.RoleLeader
+		role = model.RoleMember
 	}
-	if role != model.RoleAdmin && role != model.RoleLeader {
-		badRequest(c, "角色只能是 admin 或 leader")
-		return
-	}
-	if role == model.RoleLeader && req.OrgID == nil {
-		badRequest(c, "组织负责人必须指定所属组织")
+	if msg := h.validateUserRole(role, req.OrgID, 0); msg != "" {
+		badRequest(c, msg)
 		return
 	}
 	var count int64
@@ -67,19 +107,6 @@ func (h *Handler) CreateUser(c *gin.Context) {
 	if count > 0 {
 		badRequest(c, "用户名已存在")
 		return
-	}
-	// 组织负责人账号必须绑定存在的部门或小组
-	if req.OrgID != nil {
-		var org model.Organization
-		if err := h.db.First(&org, *req.OrgID).Error; err != nil {
-			badRequest(c, "所属组织不存在")
-			return
-		}
-		h.db.Model(&model.User{}).Where("org_id = ? AND role = ?", *req.OrgID, model.RoleLeader).Count(&count)
-		if count > 0 {
-			badRequest(c, "该组织已存在负责人账号")
-			return
-		}
 	}
 	user := &model.User{
 		Username:       req.Username,
@@ -114,6 +141,16 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		badRequest(c, "参数不合法："+err.Error())
 		return
+	}
+	// 角色与所属组织可调整
+	if req.Role != "" {
+		role := req.Role
+		if msg := h.validateUserRole(role, req.OrgID, user.ID); msg != "" {
+			badRequest(c, msg)
+			return
+		}
+		user.Role = role
+		user.OrgID = req.OrgID
 	}
 	if req.Name != "" {
 		user.Name = req.Name

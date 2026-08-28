@@ -27,10 +27,12 @@ type MaterialSlide struct {
 
 // MaterialData 会议材料
 type MaterialData struct {
-	MeetingID uint            `json:"meeting_id"`
-	Title     string          `json:"title"`
-	Slides    []MaterialSlide `json:"slides"`
-	Total     int             `json:"total"`
+	MeetingID   uint            `json:"meeting_id"`
+	Title       string          `json:"title"`
+	Location    string          `json:"location"`     // 会议地点
+	MeetingTime string          `json:"meeting_time"` // 会议时间
+	Slides      []MaterialSlide `json:"slides"`
+	Total       int             `json:"total"`
 }
 
 // buildMaterialData 组装会议材料（按部门→小组→事项组织成逐条页）
@@ -104,10 +106,12 @@ func (h *Handler) buildMaterialData(meeting *model.Meeting, allowedOrgIDs map[ui
 		}
 	}
 	return MaterialData{
-		MeetingID: meeting.ID,
-		Title:     meeting.Title,
-		Slides:    slides,
-		Total:     len(slides),
+		MeetingID:   meeting.ID,
+		Title:       meeting.Title,
+		Location:    meeting.Location,
+		MeetingTime: meeting.MeetingTime.Format("2006-01-02 15:04"),
+		Slides:      slides,
+		Total:       len(slides),
 	}
 }
 
@@ -177,8 +181,12 @@ func (h *Handler) GetMaterial(c *gin.Context) {
 	}
 
 	ctx := currentUser(c)
+	if !h.meetingVisible(ctx.Role, ctx.OrgID, &meeting) {
+		forbidden(c, "无权查看该会议材料")
+		return
+	}
 	var allowed map[uint]bool
-	if ctx.Role == model.RoleLeader && ctx.OrgID != nil {
+	if model.IsOrgRole(ctx.Role) && ctx.OrgID != nil {
 		allowed = h.selfOrgIDs(*ctx.OrgID)
 	}
 	c.JSON(http.StatusOK, h.buildMaterialData(&meeting, allowed))

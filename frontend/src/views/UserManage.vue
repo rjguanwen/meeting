@@ -8,7 +8,7 @@
     </template>
 
     <el-alert
-      title="每个部门 / 小组都可创建组织负责人账号，负责人登录后即可为所属组织录入会议汇报事项。"
+      title="角色分为：管理员、部门负责人、小组负责人、组织成员。部门负责人绑定部门、小组负责人绑定小组，一个部门/小组可设置多个负责人；负责人与成员登录后可为所属组织录入/查看会议汇报事项。"
       type="info"
       :closable="false"
       show-icon
@@ -20,9 +20,7 @@
       <el-table-column prop="name" label="姓名" width="130" />
       <el-table-column label="角色" width="130">
         <template #default="{ row }">
-          <el-tag :type="row.role === 'admin' ? 'danger' : 'success'">
-            {{ row.role === 'admin' ? '管理员' : '组织负责人' }}
-          </el-tag>
+          <el-tag :type="roleTagType(row.role)">{{ roleText(row.role) }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="所属组织" min-width="160">
@@ -57,18 +55,20 @@
         </el-form-item>
         <el-form-item label="角色">
           <el-radio-group v-model="form.role">
-            <el-radio value="leader">组织负责人</el-radio>
             <el-radio value="admin">管理员</el-radio>
+            <el-radio value="dept_leader">部门负责人</el-radio>
+            <el-radio value="team_leader">小组负责人</el-radio>
+            <el-radio value="member">组织成员</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="form.role === 'leader'" label="所属组织" required>
+        <el-form-item v-if="form.role !== 'admin'" label="所属组织" required>
           <el-tree-select
             v-model="form.org_id"
-            :data="tree"
+            :data="orgSelectData"
             :props="{ label: 'name', value: 'id', children: 'children' }"
             node-key="id"
             check-strictly
-            placeholder="选择部门或小组"
+            :placeholder="orgPlaceholder"
             style="width: 100%"
           />
         </el-form-item>
@@ -82,16 +82,57 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { userApi, orgApi } from '../api'
+import { roleText, roleTagType } from '../utils/role'
 
 const users = ref([])
 const tree = ref([])
 const dialogVisible = ref(false)
 const saving = ref(false)
-const form = reactive({ id: null, username: '', name: '', password: '', role: 'leader', org_id: null })
+const form = reactive({ id: null, username: '', name: '', password: '', role: 'member', org_id: null })
+
+// 部门负责人仅能选部门；小组负责人仅能选小组；组织成员可任选
+const orgSelectData = computed(() => {
+  if (form.role === 'team_leader') {
+    // 仅小组：把小组提升为顶层
+    return tree.value.flatMap((d) => d.children || [])
+  }
+  return tree.value // 全部（部门负责人选部门，成员任选）
+})
+const orgPlaceholder = computed(() => {
+  if (form.role === 'dept_leader') return '请选择部门'
+  if (form.role === 'team_leader') return '请选择小组'
+  return '请选择部门或小组'
+})
+
+// 角色变化时，若原组织类型与新角色不符则清空
+watch(
+  () => form.role,
+  (role) => {
+    if (role === 'admin') {
+      form.org_id = null
+      return
+    }
+    const org = findOrg(form.org_id)
+    if (org) {
+      if (role === 'dept_leader' && org.type !== 'dept') form.org_id = null
+      if (role === 'team_leader' && org.type !== 'team') form.org_id = null
+    }
+  },
+)
+
+function findOrg(id) {
+  if (!id) return null
+  for (const d of tree.value) {
+    if (d.id === id) return d
+    const t = (d.children || []).find((x) => x.id === id)
+    if (t) return t
+  }
+  return null
+}
 
 async function load() {
   users.value = await userApi.list()
@@ -99,7 +140,7 @@ async function load() {
 }
 
 function openCreate() {
-  Object.assign(form, { id: null, username: '', name: '', password: '', role: 'leader', org_id: null })
+  Object.assign(form, { id: null, username: '', name: '', password: '', role: 'member', org_id: null })
   dialogVisible.value = true
 }
 
@@ -117,7 +158,7 @@ async function save() {
     ElMessage.warning('密码至少 6 位')
     return
   }
-  if (form.role === 'leader' && !form.org_id) {
+  if (form.role !== 'admin' && !form.org_id) {
     ElMessage.warning('请选择所属组织')
     return
   }

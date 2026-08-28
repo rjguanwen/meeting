@@ -43,6 +43,7 @@ func Migrate(db *gorm.DB) error {
 		&model.ReportAttachment{},
 		&model.Conclusion{},
 		&model.MeetingMinutes{},
+		&model.MeetingRoom{},
 		&model.OperationLog{},
 	); err != nil {
 		return fmt.Errorf("auto migrate: %w", err)
@@ -69,6 +70,38 @@ func InitAdmin(db *gorm.DB, cfg *config.Config) {
 		return
 	}
 	log.Printf("已创建默认管理员 %s", cfg.AdminUsername)
+}
+
+// MigrateLegacyRoles 迁移旧版角色：把历史 leader 账号按所属组织类型转为 dept_leader / team_leader。
+// 组织类型在 organizations 表，通过 JOIN 判断。
+func MigrateLegacyRoles(db *gorm.DB) {
+	var users []model.User
+	if err := db.Where("role = ?", model.RoleLeader).Find(&users).Error; err != nil {
+		log.Printf("migrate legacy roles: find users: %v", err)
+		return
+	}
+	for i := range users {
+		u := &users[i]
+		if u.OrgID == nil {
+			// 无组织的旧 leader 降级为成员
+			u.Role = model.RoleMember
+		} else {
+			var org model.Organization
+			if err := db.First(&org, *u.OrgID).Error; err != nil {
+				u.Role = model.RoleMember
+			} else if org.Type == model.OrgTypeDept {
+				u.Role = model.RoleDeptLeader
+			} else {
+				u.Role = model.RoleTeamLeader
+			}
+		}
+		if err := db.Save(u).Error; err != nil {
+			log.Printf("migrate legacy roles: save user %d: %v", u.ID, err)
+		}
+	}
+	if len(users) > 0 {
+		log.Printf("已迁移 %d 个旧 leader 账号角色", len(users))
+	}
 }
 
 func hashPassword(password string) string {

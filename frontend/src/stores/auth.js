@@ -8,7 +8,8 @@ export const useAuthStore = defineStore('auth', {
   }),
   getters: {
     isAdmin: (s) => s.user?.role === 'admin',
-    isLeader: (s) => s.user?.role === 'leader',
+    // 组织用户：部门负责人 / 小组负责人 / 组织成员
+    isLeader: (s) => !!s.user?.role && s.user.role !== 'admin',
     isLoggedIn: (s) => !!s.token,
   },
   actions: {

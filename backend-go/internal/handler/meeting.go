@@ -1,23 +1,29 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"meetingbackend/internal/model"
 )
 
 type meetingReq struct {
-	Title       string          `json:"title" binding:"required"`
-	Description string          `json:"description"`
-	MeetingTime *model.DateTime `json:"meeting_time"`
+	Title           string          `json:"title" binding:"required"`
+	Description     string          `json:"description"`
+	MeetingTime     *model.DateTime `json:"meeting_time"`
+	Location        string          `json:"location"`
+	IsConfidential  *bool           `json:"is_confidential"` // 保密会议：仅参会组织负责人可查看
+	OrgIDs          []uint          `json:"org_ids"`         // 参会组织（创建/编辑时设置）
 }
 
 // CreateMeeting POST /api/meetings 创建会议（管理员）
+// 支持在创建时一并设置会议地点、会议时间与参会组织。
 func (h *Handler) CreateMeeting(c *gin.Context) {
 	var req meetingReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -32,12 +38,25 @@ func (h *Handler) CreateMeeting(c *gin.Context) {
 	meeting := &model.Meeting{
 		Title:       req.Title,
 		Description: req.Description,
+		Location:    req.Location,
 		CreatorID:   ctx.ID,
 		MeetingTime: mt,
 		Status:      model.MeetingDraft,
 	}
-	if err := h.db.Create(meeting).Error; err != nil {
-		fail(c, http.StatusInternalServerError, "创建会议失败")
+	if req.IsConfidential != nil {
+		meeting.IsConfidential = *req.IsConfidential
+	}
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(meeting).Error; err != nil {
+			return err
+		}
+		if len(req.OrgIDs) > 0 {
+			return setMeetingOrgsTx(tx, meeting.ID, req.OrgIDs)
+		}
+		return nil
+	})
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "创建会议失败："+err.Error())
 		return
 	}
 	h.logRecord(c, model.LogMeetingCreate, "meeting", meeting.ID, "创建会议："+meeting.Title)
@@ -76,7 +95,7 @@ func (h *Handler) ListMeetings(c *gin.Context) {
 			q = q.Where("meeting_time < ?", t.Add(24*time.Hour))
 		}
 	}
-	if ctx.Role == model.RoleLeader {
+	if model.IsOrgRole(ctx.Role) {
 		if ctx.OrgID == nil {
 			c.JSON(http.StatusOK, []model.Meeting{})
 			return
@@ -86,6 +105,10 @@ func (h *Handler) ListMeetings(c *gin.Context) {
 			Where("org_id IN ?", orgIDs).
 			Select("meeting_id")
 		q = q.Where("id IN (?)", sub)
+		// 保密会议仅参会组织负责人可见，普通成员不可见
+		if ctx.Role == model.RoleMember {
+			q = q.Where("is_confidential = ?", false)
+		}
 	}
 
 	if page > 0 {
@@ -137,7 +160,35 @@ func (h *Handler) GetMeeting(c *gin.Context) {
 		notFound(c, "会议不存在")
 		return
 	}
+	ctx := currentUser(c)
+	if !h.meetingVisible(ctx.Role, ctx.OrgID, &meeting) {
+		forbidden(c, "无权查看该会议")
+		return
+	}
 	c.JSON(http.StatusOK, meeting)
+}
+
+// meetingVisible 判断会议对用户是否可见（读权限）：
+// admin 全部可见；组织用户须为该会议参会组织；
+// 保密会议（IsConfidential）仅参会组织负责人（dept_leader/team_leader）可见，普通成员不可见。
+func (h *Handler) meetingVisible(role string, orgID *uint, meeting *model.Meeting) bool {
+	if role == model.RoleAdmin {
+		return true
+	}
+	if orgID == nil {
+		return false
+	}
+	var count int64
+	h.db.Model(&model.MeetingOrg{}).
+		Where("meeting_id = ? AND org_id = ?", meeting.ID, *orgID).
+		Count(&count)
+	if count == 0 {
+		return false
+	}
+	if meeting.IsConfidential && role == model.RoleMember {
+		return false
+	}
+	return true
 }
 
 // UpdateMeeting PATCH /api/meetings/:id 修改会议（管理员）
@@ -161,16 +212,45 @@ func (h *Handler) UpdateMeeting(c *gin.Context) {
 		badRequest(c, "参数不合法："+err.Error())
 		return
 	}
+	// 参会组织仅筹备中的会议可修改
+	if len(req.OrgIDs) > 0 && meeting.Status != model.MeetingDraft {
+		badRequest(c, "仅筹备中的会议可以设置参会组织")
+		return
+	}
 	if req.Title != "" {
 		meeting.Title = req.Title
 	}
 	meeting.Description = req.Description
+	meeting.Location = req.Location
+	if req.IsConfidential != nil {
+		meeting.IsConfidential = *req.IsConfidential
+	}
 	if req.MeetingTime != nil {
 		meeting.MeetingTime = req.MeetingTime.Time
 	}
-	if err := h.db.Save(&meeting).Error; err != nil {
-		fail(c, http.StatusInternalServerError, "保存会议失败")
+	if err := h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&meeting).Error; err != nil {
+			return err
+		}
+		if len(req.OrgIDs) > 0 {
+			return setMeetingOrgsTx(tx, meeting.ID, req.OrgIDs)
+		}
+		return nil
+	}); err != nil {
+		fail(c, http.StatusInternalServerError, "保存会议失败："+err.Error())
 		return
+	}
+	if len(req.OrgIDs) > 0 {
+		var moList []*model.MeetingOrg
+		h.db.Preload("Org").Where("meeting_id = ?", meeting.ID).Order("sort_order asc").Find(&moList)
+		names := make([]string, 0, len(moList))
+		for _, mo := range moList {
+			if mo.Org != nil {
+				names = append(names, mo.Org.Name)
+			}
+		}
+		h.logRecord(c, model.LogMeetingOrgs, "meeting", meeting.ID,
+			"设置会议「"+meeting.Title+"」参会组织："+strings.Join(names, "、"))
 	}
 	h.logRecord(c, model.LogMeetingUpdate, "meeting", meeting.ID, "修改会议："+meeting.Title)
 	c.JSON(http.StatusOK, meeting)
@@ -209,6 +289,37 @@ type meetingOrgsReq struct {
 	OrgIDs []uint `json:"org_ids" binding:"required"`
 }
 
+// setMeetingOrgsTx 在事务内覆盖式写入参会组织：校验组织存在、去重后写入。
+func setMeetingOrgsTx(tx *gorm.DB, meetingID uint, orgIDs []uint) error {
+	seen := make(map[uint]bool)
+	for _, oid := range orgIDs {
+		if seen[oid] {
+			continue
+		}
+		seen[oid] = true
+		var org model.Organization
+		if err := tx.First(&org, oid).Error; err != nil {
+			return fmt.Errorf("参会组织不存在: %d", oid)
+		}
+	}
+	if err := tx.Where("meeting_id = ?", meetingID).Delete(&model.MeetingOrg{}).Error; err != nil {
+		return err
+	}
+	sort := 0
+	for _, oid := range orgIDs {
+		if !seen[oid] {
+			continue
+		}
+		seen[oid] = false
+		mo := &model.MeetingOrg{MeetingID: meetingID, OrgID: oid, SortOrder: sort}
+		if err := tx.Create(mo).Error; err != nil {
+			return err
+		}
+		sort++
+	}
+	return nil
+}
+
 // SetMeetingOrgs POST /api/meetings/:id/orgs 设置参会组织（管理员，覆盖式）
 func (h *Handler) SetMeetingOrgs(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
@@ -234,38 +345,18 @@ func (h *Handler) SetMeetingOrgs(c *gin.Context) {
 		badRequest(c, "请至少指定一个参会组织")
 		return
 	}
-	// 校验组织存在且唯一
-	seen := make(map[uint]bool)
-	for _, oid := range req.OrgIDs {
-		if seen[oid] {
-			continue
-		}
-		seen[oid] = true
-		var org model.Organization
-		if err := h.db.First(&org, oid).Error; err != nil {
-			badRequest(c, "参会组织不存在")
+	if err := h.db.Transaction(func(tx *gorm.DB) error {
+		return setMeetingOrgsTx(tx, meeting.ID, req.OrgIDs)
+	}); err != nil {
+		if strings.HasPrefix(err.Error(), "参会组织不存在") {
+			badRequest(c, err.Error())
 			return
 		}
-	}
-	if err := h.db.Where("meeting_id = ?", id).Delete(&model.MeetingOrg{}).Error; err != nil {
-		fail(c, http.StatusInternalServerError, "更新参会组织失败")
+		fail(c, http.StatusInternalServerError, "更新参会组织失败："+err.Error())
 		return
 	}
-	sort := 0
-	for _, oid := range req.OrgIDs {
-		if !seen[oid] {
-			continue
-		}
-		seen[oid] = false
-		mo := &model.MeetingOrg{MeetingID: uint(id), OrgID: oid, SortOrder: sort}
-		if err := h.db.Create(mo).Error; err != nil {
-			fail(c, http.StatusInternalServerError, "保存参会组织失败")
-			return
-		}
-		sort++
-	}
 	var moList []*model.MeetingOrg
-	h.db.Preload("Org").Where("meeting_id = ?", id).Order("sort_order asc").Find(&moList)
+	h.db.Preload("Org").Where("meeting_id = ?", meeting.ID).Order("sort_order asc").Find(&moList)
 	names := make([]string, 0, len(moList))
 	for _, mo := range moList {
 		if mo.Org != nil {
@@ -292,6 +383,13 @@ func (h *Handler) StartMeeting(c *gin.Context) {
 	}
 	if meeting.Status != model.MeetingDraft {
 		badRequest(c, "仅筹备中的会议可以开始")
+		return
+	}
+	// 未录入任何汇报内容时禁止开始
+	var itemCount int64
+	h.db.Model(&model.ReportItem{}).Where("meeting_id = ?", id).Count(&itemCount)
+	if itemCount == 0 {
+		badRequest(c, "该会议尚未录入任何汇报内容，无法开始")
 		return
 	}
 	meeting.Status = model.MeetingOngoing

@@ -28,7 +28,7 @@
       />
       <el-alert
         v-else
-        title="录入本组织需要向会议汇报的事项，点击「添加汇报事项」即可新增。"
+        :title="isCreator ? '选择参会组织后，为该组织录入需要向会议汇报的事项。' : '录入本组织需要向会议汇报的事项，点击「添加汇报事项」即可新增。'"
         type="info"
         :closable="false"
         show-icon
@@ -92,6 +92,11 @@
             placeholder="请输入本次会议的汇报内容、进展、风险或需协调事项等"
           />
         </el-form-item>
+        <el-form-item v-if="isCreator" label="录入组织" required>
+          <el-select v-model="editOrgId" placeholder="选择要挂载的参会组织" style="width: 100%">
+            <el-option v-for="o in meeting?.orgs || []" :key="o.org_id" :label="o.org?.name" :value="o.org_id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="排序">
           <el-input-number v-model="form.sort_order" :min="0" />
         </el-form-item>
@@ -122,6 +127,9 @@ const items = ref([])
 const dialogVisible = ref(false)
 const saving = ref(false)
 const form = reactive({ id: null, title: '', content: '', sort_order: 0 })
+// 会议创建者（含管理员）可为自己的会议录入汇报，需选择挂载的参会组织
+const isCreator = computed(() => auth.isAdmin || meeting.value?.creator_id === auth.user?.id)
+const editOrgId = ref(null)
 
 // 附件管理
 const attDialog = ref(false)
@@ -158,6 +166,9 @@ function fmtTime(t) {
 async function load() {
   meeting.value = await meetingApi.get(meetingId)
   items.value = await itemApi.list(meetingId)
+  if (!editOrgId.value && meeting.value?.orgs?.length) {
+    editOrgId.value = meeting.value.orgs[0].org_id
+  }
 }
 
 function openCreate() {
@@ -175,9 +186,9 @@ async function save() {
     ElMessage.warning('请输入事项标题')
     return
   }
-  const orgId = auth.isAdmin ? (auth.selectedOrgId || myOrgId()) : auth.user?.org_id
+  const orgId = isCreator.value ? editOrgId.value : auth.user?.org_id
   if (!orgId) {
-    ElMessage.warning('未找到所属组织，请联系管理员')
+    ElMessage.warning('请先选择录入组织')
     return
   }
   saving.value = true
@@ -194,10 +205,6 @@ async function save() {
   } finally {
     saving.value = false
   }
-}
-
-function myOrgId() {
-  return auth.user?.org_id
 }
 
 function remove(row) {

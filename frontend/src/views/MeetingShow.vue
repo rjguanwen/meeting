@@ -5,6 +5,8 @@
       <div class="topbar-left">
         <el-icon :size="20" color="#409eff"><Monitor /></el-icon>
         <span class="meeting-title">{{ material.title }}</span>
+        <span v-if="material.location" class="meeting-meta">地点：{{ material.location }}</span>
+        <span v-if="material.meeting_time" class="meeting-meta">时间：{{ material.meeting_time }}</span>
       </div>
       <div class="topbar-right">
         <el-button size="small" @click="$router.push(`/meetings/${material.meeting_id}`)">退出展示</el-button>
@@ -350,6 +352,10 @@ onBeforeUnmount(() => {
 .meeting-title {
   font-size: 16px;
   font-weight: 600;
+}
+.meeting-meta {
+  font-size: 13px;
+  color: #a0cfff;
 }
 .slide-stage {
   flex: 1;

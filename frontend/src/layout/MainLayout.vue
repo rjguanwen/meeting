@@ -25,14 +25,18 @@
             <el-icon><User /></el-icon>
             <span>账号管理</span>
           </el-menu-item>
-          <el-menu-item index="/logs">
-            <el-icon><Document /></el-icon>
-            <span>操作日志</span>
+          <el-menu-item index="/rooms">
+            <el-icon><MapLocation /></el-icon>
+            <span>会议室管理</span>
           </el-menu-item>
         </template>
         <el-menu-item index="/meetings">
           <el-icon><Calendar /></el-icon>
           <span>会议管理</span>
+        </el-menu-item>
+        <el-menu-item v-if="auth.isAdmin" index="/logs">
+          <el-icon><Document /></el-icon>
+          <span>操作日志</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -45,7 +49,7 @@
             <el-avatar :size="30" class="avatar">{{ avatarText }}</el-avatar>
             <span class="name">{{ auth.user?.name || auth.user?.username }}</span>
             <el-tag size="small" :type="auth.isAdmin ? 'danger' : 'success'">
-              {{ auth.isAdmin ? '管理员' : '组织负责人' }}
+              {{ roleText }}
             </el-tag>
             <el-icon><ArrowDown /></el-icon>
           </span>
@@ -75,6 +79,16 @@ const auth = useAuthStore()
 
 const pageTitle = computed(() => route.meta.title || '')
 const avatarText = computed(() => (auth.user?.name || auth.user?.username || '?').charAt(0))
+
+const roleText = computed(() => {
+  const m = {
+    admin: '管理员',
+    dept_leader: '部门负责人',
+    team_leader: '小组负责人',
+    member: '组织成员',
+  }
+  return m[auth.user?.role] || '组织用户'
+})
 
 function onCommand(cmd) {
   if (cmd === 'logout') {

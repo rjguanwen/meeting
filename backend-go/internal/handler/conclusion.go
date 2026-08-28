@@ -24,6 +24,16 @@ func (h *Handler) ListConclusions(c *gin.Context) {
 		badRequest(c, "会议 ID 不合法")
 		return
 	}
+	var meeting model.Meeting
+	if err := h.db.First(&meeting, id).Error; err != nil {
+		notFound(c, "会议不存在")
+		return
+	}
+	ctx := currentUser(c)
+	if !h.meetingVisible(ctx.Role, ctx.OrgID, &meeting) {
+		forbidden(c, "无权查看该会议内容")
+		return
+	}
 	var conclusions []model.Conclusion
 	if err := h.db.Where("meeting_id = ?", id).Order("report_item_id asc, id asc").Find(&conclusions).Error; err != nil {
 		fail(c, http.StatusInternalServerError, "查询讨论结论失败")
@@ -46,6 +56,11 @@ func (h *Handler) CreateConclusion(c *gin.Context) {
 	}
 	if meeting.Status != model.MeetingOngoing {
 		badRequest(c, "仅进行中的会议可以录入讨论结论")
+		return
+	}
+	ctx := currentUser(c)
+	if !h.meetingVisible(ctx.Role, ctx.OrgID, &meeting) {
+		forbidden(c, "保密会议仅参会组织负责人可操作")
 		return
 	}
 	var req conclusionReq
@@ -94,6 +109,16 @@ func (h *Handler) UpdateConclusion(c *gin.Context) {
 		notFound(c, "讨论结论不存在")
 		return
 	}
+	var meeting model.Meeting
+	if err := h.db.First(&meeting, conc.MeetingID).Error; err != nil {
+		notFound(c, "会议不存在")
+		return
+	}
+	ctx := currentUser(c)
+	if !h.meetingVisible(ctx.Role, ctx.OrgID, &meeting) {
+		forbidden(c, "保密会议仅参会组织负责人可操作")
+		return
+	}
 	if !h.conclusionEditable(conc.MeetingID) {
 		badRequest(c, "仅进行中的会议可以修改讨论结论")
 		return
@@ -134,6 +159,16 @@ func (h *Handler) DeleteConclusion(c *gin.Context) {
 	var conc model.Conclusion
 	if err := h.db.First(&conc, id).Error; err != nil {
 		notFound(c, "讨论结论不存在")
+		return
+	}
+	var meeting model.Meeting
+	if err := h.db.First(&meeting, conc.MeetingID).Error; err != nil {
+		notFound(c, "会议不存在")
+		return
+	}
+	ctx := currentUser(c)
+	if !h.meetingVisible(ctx.Role, ctx.OrgID, &meeting) {
+		forbidden(c, "保密会议仅参会组织负责人可操作")
 		return
 	}
 	if !h.conclusionEditable(conc.MeetingID) {

@@ -15,6 +15,7 @@ const routes = [
       { path: 'dashboard', name: 'dashboard', component: () => import('../views/Dashboard.vue'), meta: { title: '首页' } },
       { path: 'orgs', name: 'orgs', component: () => import('../views/OrgManage.vue'), meta: { title: '组织管理', admin: true } },
       { path: 'users', name: 'users', component: () => import('../views/UserManage.vue'), meta: { title: '账号管理', admin: true } },
+      { path: 'rooms', name: 'rooms', component: () => import('../views/RoomManage.vue'), meta: { title: '会议室管理', admin: true } },
       { path: 'logs', name: 'logs', component: () => import('../views/LogManage.vue'), meta: { title: '操作日志', admin: true } },
       { path: 'meetings', name: 'meetings', component: () => import('../views/MeetingList.vue'), meta: { title: '会议管理' } },
       { path: 'meetings/:id', name: 'meeting-detail', component: () => import('../views/MeetingDetail.vue'), meta: { title: '会议详情' } },

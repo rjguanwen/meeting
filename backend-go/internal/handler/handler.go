@@ -55,6 +55,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	user.GET("/items/:id/attachments", h.ListAttachments)
 	user.GET("/attachments/:id/file", h.GetAttachmentFile)
 	user.GET("/orgs/tree", h.OrgTree)
+	user.GET("/rooms", h.ListRooms)
 
 	// 需要管理员
 	admin := api.Group("", h.auth.RequireAdmin())
@@ -69,6 +70,9 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	admin.POST("/meetings/:id/finish", h.FinishMeeting)
 	admin.POST("/meetings/:id/archive", h.ArchiveMeeting)
 	admin.GET("/logs", h.ListLogs)
+	admin.POST("/rooms", h.CreateRoom)
+	admin.PATCH("/rooms/:id", h.UpdateRoom)
+	admin.DELETE("/rooms/:id", h.DeleteRoom)
 	admin.POST("/orgs", h.CreateOrg)
 	admin.PATCH("/orgs/:id", h.UpdateOrg)
 	admin.DELETE("/orgs/:id", h.DeleteOrg)

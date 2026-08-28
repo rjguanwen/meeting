@@ -61,6 +61,14 @@ export const userApi = {
   update: (id, data) => api.patch(`/users/${id}`, data),
 }
 
+// ===== 会议室 =====
+export const roomApi = {
+  list: () => api.get('/rooms'),
+  create: (data) => api.post('/rooms', data),
+  update: (id, data) => api.patch(`/rooms/${id}`, data),
+  remove: (id) => api.delete(`/rooms/${id}`),
+}
+
 // ===== 会议 =====
 export const meetingApi = {
   list: (params) => api.get('/meetings', { params }),

@@ -19,6 +19,9 @@ func buildMinutes(meeting *model.Meeting, orgs []model.Organization, items []mod
 	// 标题
 	fmt.Fprintf(&b, "# %s\n\n", meeting.Title)
 	fmt.Fprintf(&b, "- 会议时间：%s\n", meeting.MeetingTime.Format("2006-01-02 15:04"))
+	if strings.TrimSpace(meeting.Location) != "" {
+		fmt.Fprintf(&b, "- 会议地点：%s\n", meeting.Location)
+	}
 	fmt.Fprintf(&b, "- 会议状态：%s\n", meetingStatusText(meeting.Status))
 	fmt.Fprintf(&b, "- 生成时间：%s\n\n", time.Now().Format("2006-01-02 15:04"))
 
@@ -127,6 +130,16 @@ func (h *Handler) GetMinutes(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
 		badRequest(c, "会议 ID 不合法")
+		return
+	}
+	var meeting model.Meeting
+	if err := h.db.First(&meeting, id).Error; err != nil {
+		notFound(c, "会议不存在")
+		return
+	}
+	ctx := currentUser(c)
+	if !h.meetingVisible(ctx.Role, ctx.OrgID, &meeting) {
+		forbidden(c, "无权查看该会议纪要")
 		return
 	}
 	var minutes model.MeetingMinutes

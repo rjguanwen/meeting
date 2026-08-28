@@ -62,6 +62,15 @@
       <el-table-column label="会议时间" width="160">
         <template #default="{ row }">{{ fmtTime(row.meeting_time) }}</template>
       </el-table-column>
+      <el-table-column label="会议地点" min-width="140">
+        <template #default="{ row }">{{ row.location || '—' }}</template>
+      </el-table-column>
+      <el-table-column label="保密" width="80">
+        <template #default="{ row }">
+          <el-tag v-if="row.is_confidential" type="danger" size="small">保密</el-tag>
+          <span v-else class="plain">公开</span>
+        </template>
+      </el-table-column>
       <el-table-column label="参会组织" min-width="200">
         <template #default="{ row }">
           {{ (row.orgs || []).map((o) => o.org?.name).filter(Boolean).join('、') || '—' }}
@@ -75,7 +84,12 @@
       <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
           <el-button size="small" type="primary" @click="goDetail(row)">详情</el-button>
-          <el-button v-if="auth.isLeader && row.status === 'draft'" size="small" type="success" @click="goEntry(row)">
+          <el-button
+            v-if="row.status === 'draft' && (auth.isAdmin || row.creator_id === auth.user?.id)"
+            size="small"
+            type="success"
+            @click="goEntry(row)"
+          >
             录入汇报
           </el-button>
           <el-button v-if="auth.isAdmin && row.status !== 'archived'" size="small" type="danger" @click="remove(row)">删除</el-button>
@@ -98,16 +112,26 @@
         @size-change="onSizeChange"
       />
     </div>
+
+    <!-- 创建会议弹框 -->
+    <MeetingFormDialog
+      v-model="createVisible"
+      title="创建会议"
+      :initial="createInitial"
+      :loading="saving"
+      @submit="createMeeting"
+    />
   </el-card>
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Plus, Search, RefreshLeft } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { meetingApi } from '../api'
 import { useAuthStore } from '../stores/auth'
+import MeetingFormDialog from '../components/MeetingFormDialog.vue'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -181,20 +205,38 @@ function goDetail(row) {
 function goEntry(row) {
   router.push(`/entry/${row.id}`)
 }
+const createVisible = ref(false)
+const saving = ref(false)
+// 创建时默认会议时间为明天 09:00
+const createInitial = computed(() => ({
+  title: '',
+  location: '',
+  meeting_time: defaultTime(),
+  is_confidential: false,
+}))
+
+function defaultTime() {
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  d.setHours(9, 0, 0, 0)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
 function openCreate() {
-  router.push({ name: 'meetings', query: { create: '1' } })
-  ElMessageBox.prompt('请输入会议名称', '创建会议', {
-    confirmButtonText: '下一步',
-    cancelButtonText: '取消',
-    inputPattern: /\S+/,
-    inputErrorMessage: '会议名称不能为空',
-  })
-    .then(async ({ value }) => {
-      const m = await meetingApi.create({ title: value })
-      ElMessage.success('会议已创建')
-      router.push(`/meetings/${m.id}`)
-    })
-    .catch(() => {})
+  createVisible.value = true
+}
+
+async function createMeeting(payload) {
+  saving.value = true
+  try {
+    const m = await meetingApi.create(payload)
+    ElMessage.success('会议已创建')
+    createVisible.value = false
+    router.push(`/meetings/${m.id}`)
+  } finally {
+    saving.value = false
+  }
 }
 
 function remove(row) {
@@ -233,5 +275,8 @@ onMounted(() => {
   margin-top: 14px;
   display: flex;
   justify-content: flex-end;
+}
+.plain {
+  color: #909399;
 }
 </style>

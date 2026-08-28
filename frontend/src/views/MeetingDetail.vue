@@ -7,13 +7,20 @@
             <h2 class="title">{{ meeting.title }}</h2>
             <div class="meta">
               <el-tag :type="statusType" size="small">{{ statusText }}</el-tag>
+              <el-tag v-if="meeting.is_confidential" type="danger" size="small">保密会议</el-tag>
               <span>会议时间：{{ fmtTime(meeting.meeting_time) }}</span>
+              <span v-if="meeting.location">会议地点：{{ meeting.location }}</span>
               <span>{{ meeting.description }}</span>
             </div>
           </div>
           <div class="actions">
             <el-button @click="router.push('/meetings')">返回</el-button>
-            <el-button v-if="auth.isLeader && meeting.status === 'draft'" type="success" @click="$router.push(`/entry/${meeting.id}`)">
+            <el-button v-if="auth.isAdmin && meeting.status !== 'archived'" :icon="Edit" @click="openEdit">编辑</el-button>
+            <el-button
+              v-if="meeting.status === 'draft' && (auth.isAdmin || meeting.creator_id === auth.user?.id)"
+              type="success"
+              @click="$router.push(`/entry/${meeting.id}`)"
+            >
               录入汇报
             </el-button>
             <el-button type="warning" @click="enterShow">
@@ -184,6 +191,16 @@
       <el-empty v-else description="会议纪要尚未生成" :image-size="60" />
     </el-card>
 
+    <!-- 编辑会议弹框 -->
+    <MeetingFormDialog
+      v-model="editVisible"
+      title="编辑会议"
+      :initial="editInitial"
+      :allow-orgs="meeting.status === 'draft'"
+      :loading="savingMeeting"
+      @submit="saveMeeting"
+    />
+
     <!-- 参会组织设置对话框 -->
     <el-dialog v-model="orgDialog" title="设置参会组织" width="480px">
       <el-alert title="仅部门可直接选择；选择小组时需先选所属部门。" type="info" :closable="false" class="tip" />
@@ -219,6 +236,7 @@ import { marked } from 'marked'
 import { meetingApi, itemApi, conclusionApi, minutesApi, orgApi } from '../api'
 import { useAuthStore } from '../stores/auth'
 import AttachmentManager from '../components/AttachmentManager.vue'
+import MeetingFormDialog from '../components/MeetingFormDialog.vue'
 
 marked.setOptions({ gfm: true, breaks: true })
 
@@ -376,6 +394,19 @@ async function saveMinutes() {
 }
 
 async function startMeeting() {
+  if (!items.value.length) {
+    ElMessage.warning('该会议尚未录入任何汇报内容，无法开始会议')
+    return
+  }
+  try {
+    await ElMessageBox.confirm('请确认所有参会组织的汇报内容已全部录入完成，是否开始会议？', '开始会议', {
+      confirmButtonText: '确认开始',
+      cancelButtonText: '再检查一下',
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
   await meetingApi.start(meetingId)
   ElMessage.success('会议已开始，进入会议展示')
   router.push(`/show/${meetingId}`)
@@ -422,6 +453,39 @@ function downloadMinutes() {
   a.download = `${meeting.value?.title || '会议纪要'}.md`
   a.click()
   URL.revokeObjectURL(url)
+}
+
+// 编辑会议：名称/地点/时间随时可改（非归档），参会组织仅筹备中可改
+const editVisible = ref(false)
+const savingMeeting = ref(false)
+const editInitial = computed(() => ({
+  title: meeting.value?.title || '',
+  location: meeting.value?.location || '',
+  meeting_time: toFullTime(meeting.value?.meeting_time),
+  is_confidential: meeting.value?.is_confidential || false,
+  org_ids: orgList.value.map((o) => o.org_id),
+}))
+
+function toFullTime(t) {
+  if (!t) return ''
+  // 后端输出为 YYYY-MM-DD HH:mm，补齐秒以匹配 date-picker 格式
+  return t.length === 16 ? `${t}:00` : t
+}
+
+function openEdit() {
+  editVisible.value = true
+}
+
+async function saveMeeting(payload) {
+  savingMeeting.value = true
+  try {
+    await meetingApi.update(meetingId, payload)
+    ElMessage.success('会议已更新')
+    editVisible.value = false
+    await load()
+  } finally {
+    savingMeeting.value = false
+  }
 }
 
 async function openOrgDialog() {

@@ -15,9 +15,18 @@ const (
 
 // 用户角色
 const (
-	RoleAdmin  = "admin"  // 系统管理员/会议主持人
-	RoleLeader = "leader" // 组织负责人
+	RoleAdmin      = "admin"       // 系统管理员/会议主持人
+	RoleDeptLeader = "dept_leader" // 部门负责人
+	RoleTeamLeader = "team_leader" // 小组负责人
+	RoleMember     = "member"      // 组织成员
+	// RoleLeader 兼容旧数据（迁移后会替换），避免历史代码引用出错
+	RoleLeader = "leader"
 )
+
+// IsOrgRole 判断是否为绑定组织的普通用户角色（非管理员）
+func IsOrgRole(role string) bool {
+	return role != RoleAdmin
+}
 
 // 会议状态
 const (
@@ -57,24 +66,12 @@ type User struct {
 	Username       string    `gorm:"size:64;uniqueIndex;not null" json:"username"`
 	HashedPassword string    `gorm:"size:255;not null" json:"-"`
 	Name           string    `gorm:"size:128" json:"name"`
-	Role           string    `gorm:"size:16;default:leader" json:"role"`
-	OrgID          *uint     `gorm:"index" json:"org_id"` // leader 所属组织，admin 为 nil
+	Role           string    `gorm:"size:16;default:member" json:"role"`
+	OrgID          *uint     `gorm:"index" json:"org_id"` // 非管理员所属组织，admin 为 nil
 	IsActive       bool      `gorm:"default:true" json:"is_active"`
 	CreatedAt      time.Time `json:"created_at"`
 
 	Org *Organization `gorm:"foreignKey:OrgID" json:"org,omitempty"`
-}
-
-// NewLeader 创建组织负责人账号。
-func NewLeader(username, password, name string, orgID uint) *User {
-	return &User{
-		Username:       username,
-		HashedPassword: hashPassword(password),
-		Name:           name,
-		Role:           RoleLeader,
-		OrgID:          &orgID,
-		IsActive:       true,
-	}
 }
 
 // CheckPassword 校验密码。
@@ -98,6 +95,8 @@ type Meeting struct {
 	ID                uint      `gorm:"primaryKey" json:"id"`
 	Title             string    `gorm:"size:255;not null" json:"title"`
 	Description       string    `gorm:"type:text" json:"description"`
+	Location          string    `gorm:"size:255" json:"location"`         // 会议地点
+	IsConfidential    bool      `gorm:"default:false" json:"is_confidential"` // 保密会议：仅参会组织负责人可查看
 	CreatorID         uint      `gorm:"index" json:"creator_id"`
 	MeetingTime       time.Time `json:"meeting_time"` // 会议时间
 	Status            string    `gorm:"size:16;default:draft" json:"status"`
@@ -170,6 +169,18 @@ type MeetingMinutes struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// MeetingRoom 会议室。
+type MeetingRoom struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Name      string    `gorm:"size:128;not null" json:"name"` // 会议室名称
+	Location  string    `gorm:"size:255" json:"location"`      // 所在位置（楼栋/楼层）
+	Capacity  int       `json:"capacity"`                      // 可容纳人数
+	Remark    string    `gorm:"size:512" json:"remark"`        // 备注
+	SortOrder int       `json:"sort_order"`
+	IsActive  bool      `gorm:"default:true" json:"is_active"` // 是否启用
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // OperationLog 操作日志。记录登录与关键操作，供管理员查询。
 type OperationLog struct {
 	ID         uint      `gorm:"primaryKey" json:"id"`
@@ -209,6 +220,9 @@ const (
 	LogConclusionDel  = "conclusion.delete"
 	LogAttachmentUp   = "attachment.upload"
 	LogAttachmentDel  = "attachment.delete"
+	LogRoomCreate     = "room.create"
+	LogRoomUpdate     = "room.update"
+	LogRoomDelete     = "room.delete"
 )
 
 // WithOrganizationTree 将组织列表按部门-小组组装为树。

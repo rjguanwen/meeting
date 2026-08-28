@@ -21,6 +21,7 @@ func main() {
 	if err := database.Migrate(db); err != nil {
 		log.Fatalf("migrate database: %v", err)
 	}
+	database.MigrateLegacyRoles(db)
 	database.InitAdmin(db, cfg)
 
 	gin.SetMode(gin.ReleaseMode)
