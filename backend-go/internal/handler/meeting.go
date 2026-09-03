@@ -445,11 +445,16 @@ func (h *Handler) ArchiveMeeting(c *gin.Context) {
 		badRequest(c, "会议已归档")
 		return
 	}
+	// 微盘自动上传：如需纪要且尚未生成，先自动生成一份（不阻塞归档）
+	h.ensureMinutesForUpload(&meeting)
+
 	meeting.Status = model.MeetingArchived
 	if err := h.db.Save(&meeting).Error; err != nil {
 		fail(c, http.StatusInternalServerError, "更新会议状态失败")
 		return
 	}
 	h.logRecord(c, model.LogMeetingArchive, "meeting", meeting.ID, "归档会议："+meeting.Title)
+	// 归档后自动上传最新纪要至微盘（失败仅记日志，不阻塞归档）
+	h.uploadMinutesToWeDrive(c, &meeting)
 	c.JSON(http.StatusOK, meeting)
 }

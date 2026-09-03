@@ -1,11 +1,14 @@
 package handler
 
 import (
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
 	"meetingbackend/internal/config"
 	"meetingbackend/internal/middleware"
+	"meetingbackend/internal/wedrive"
 )
 
 // Handler 持有依赖：数据库、配置、认证
@@ -13,10 +16,25 @@ type Handler struct {
 	db   *gorm.DB
 	cfg  *config.Config
 	auth *middleware.Auth
+
+	wedrive *wedrive.Client // 企业微信微盘客户端；未启用时为 nil
 }
 
 func New(db *gorm.DB, cfg *config.Config, auth *middleware.Auth) *Handler {
-	return &Handler{db: db, cfg: cfg, auth: auth}
+	h := &Handler{db: db, cfg: cfg, auth: auth}
+	if wc := cfg.WeCom; wc.AutoUpload && wc.APIBase != "" && wc.CorpID != "" && wc.CorpSecret != "" && wc.SpaceID != "" {
+		h.wedrive = wedrive.New(wedrive.Config{
+			APIBase:     wc.APIBase,
+			APIPrefix:   wc.APIPrefix,
+			CorpID:      wc.CorpID,
+			CorpSecret:  wc.CorpSecret,
+			SpaceID:     wc.SpaceID,
+			FolderID:    wc.FolderID,
+			TLSInsecure: wc.TLSInsecure,
+			Timeout:     time.Duration(wc.TimeoutSeconds) * time.Second,
+		})
+	}
+	return h
 }
 
 // currentUser 从上下文获取当前登录用户

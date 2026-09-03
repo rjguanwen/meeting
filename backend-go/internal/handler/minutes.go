@@ -172,26 +172,11 @@ func (h *Handler) GenerateMinutes(c *gin.Context) {
 		return
 	}
 
-	var orgs []model.Organization
-	if err := h.db.
-		Joins("JOIN meeting_orgs mo ON mo.org_id = organizations.id AND mo.meeting_id = ?", id).
-		Order("organizations.type desc, mo.sort_order asc").
-		Find(&orgs).Error; err != nil {
-		fail(c, http.StatusInternalServerError, "查询参会组织失败")
+	content, err := h.composeMinutesContent(&meeting)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "生成会议纪要失败")
 		return
 	}
-	var items []model.ReportItem
-	if err := h.db.Where("meeting_id = ?", id).Order("org_id asc, sort_order asc").Find(&items).Error; err != nil {
-		fail(c, http.StatusInternalServerError, "查询汇报事项失败")
-		return
-	}
-	var conclusions []model.Conclusion
-	if err := h.db.Where("meeting_id = ?", id).Order("id asc").Find(&conclusions).Error; err != nil {
-		fail(c, http.StatusInternalServerError, "查询讨论结论失败")
-		return
-	}
-
-	content := buildMinutes(&meeting, orgs, items, conclusions)
 	minutes := model.MeetingMinutes{MeetingID: meeting.ID, Content: content}
 	if err := h.db.Create(&minutes).Error; err != nil {
 		fail(c, http.StatusInternalServerError, "保存会议纪要失败")
@@ -199,6 +184,26 @@ func (h *Handler) GenerateMinutes(c *gin.Context) {
 	}
 	h.logRecord(c, model.LogMinutes, "meeting", meeting.ID, "生成会议纪要："+meeting.Title)
 	c.JSON(http.StatusOK, minutes)
+}
+
+// composeMinutesContent 加载会议相关数据并生成 Markdown 纪要文本。
+func (h *Handler) composeMinutesContent(meeting *model.Meeting) (string, error) {
+	var orgs []model.Organization
+	if err := h.db.
+		Joins("JOIN meeting_orgs mo ON mo.org_id = organizations.id AND mo.meeting_id = ?", meeting.ID).
+		Order("organizations.type desc, mo.sort_order asc").
+		Find(&orgs).Error; err != nil {
+		return "", fmt.Errorf("查询参会组织失败: %w", err)
+	}
+	var items []model.ReportItem
+	if err := h.db.Where("meeting_id = ?", meeting.ID).Order("org_id asc, sort_order asc").Find(&items).Error; err != nil {
+		return "", fmt.Errorf("查询汇报事项失败: %w", err)
+	}
+	var conclusions []model.Conclusion
+	if err := h.db.Where("meeting_id = ?", meeting.ID).Order("id asc").Find(&conclusions).Error; err != nil {
+		return "", fmt.Errorf("查询讨论结论失败: %w", err)
+	}
+	return buildMinutes(meeting, orgs, items, conclusions), nil
 }
 
 // UpdateMinutes PATCH /api/meetings/:id/minutes 编辑会议纪要（会议结束后可编辑，归档后只读）

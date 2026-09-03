@@ -210,6 +210,7 @@ const (
 	LogMeetingStart   = "meeting.start"
 	LogMeetingFinish  = "meeting.finish"
 	LogMeetingArchive = "meeting.archive"
+	LogMinutesUpload  = "meeting.minutes.upload" // 归档时自动上传纪要至微盘
 	LogMaterial       = "meeting.material"
 	LogMinutes        = "meeting.minutes"
 	LogItemCreate     = "item.create"
