@@ -17,7 +17,7 @@
             <el-button @click="router.push('/meetings')">返回</el-button>
             <el-button v-if="auth.isAdmin && meeting.status !== 'archived'" :icon="Edit" @click="openEdit">编辑</el-button>
             <el-button
-              v-if="meeting.status === 'draft' && (auth.isAdmin || meeting.creator_id === auth.user?.id)"
+              v-if="meeting.status === 'draft' && (auth.isAdmin || auth.isLeader)"
               type="success"
               @click="$router.push(`/entry/${meeting.id}`)"
             >
@@ -119,7 +119,8 @@
               </div>
             </template>
             <div class="item-content">
-              <p class="content-text">{{ item.content || '（无详细内容）' }}</p>
+              <div v-if="item.content && item.content.trim()" class="md-body content-text" v-html="renderMarkdown(item.content)"></div>
+              <p v-else class="content-empty">（无详细内容）</p>
               <div class="item-meta">录入人：{{ item.creator?.name || '—' }}</div>
 
               <template v-if="concByItem[item.id]?.length">
@@ -232,13 +233,11 @@ import {
   FolderChecked,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { marked } from 'marked'
 import { meetingApi, itemApi, conclusionApi, minutesApi, orgApi } from '../api'
 import { useAuthStore } from '../stores/auth'
 import AttachmentManager from '../components/AttachmentManager.vue'
 import MeetingFormDialog from '../components/MeetingFormDialog.vue'
-
-marked.setOptions({ gfm: true, breaks: true })
+import { renderMarkdown } from '../utils/md'
 
 const route = useRoute()
 const router = useRouter()
@@ -315,7 +314,7 @@ const materialDisabledTip = computed(() => {
 
 // 纪要渲染为 HTML（Markdown）
 const renderedMinutes = computed(() =>
-  minutes.value.content ? marked.parse(minutes.value.content) : '',
+  minutes.value.content ? renderMarkdown(minutes.value.content) : '',
 )
 
 // 纪要生成权限：仅会议开始后（进行中/已结束）且归档前可用
@@ -585,8 +584,12 @@ onMounted(load)
   padding: 0 12px 8px;
 }
 .content-text {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+.content-empty {
+  color: #c0c4cc;
   margin: 0 0 8px;
-  white-space: pre-wrap;
 }
 .item-meta {
   color: #909399;

@@ -85,7 +85,7 @@
         <template #default="{ row }">
           <el-button size="small" type="primary" @click="goDetail(row)">详情</el-button>
           <el-button
-            v-if="row.status === 'draft' && (auth.isAdmin || row.creator_id === auth.user?.id)"
+            v-if="row.status === 'draft' && (auth.isAdmin || auth.isLeader)"
             size="small"
             type="success"
             @click="goEntry(row)"

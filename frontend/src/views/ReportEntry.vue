@@ -49,7 +49,11 @@
       <el-table :data="myItems" border>
         <el-table-column type="index" label="#" width="50" />
         <el-table-column prop="title" label="事项标题" min-width="200" />
-        <el-table-column prop="content" label="汇报内容" min-width="260" show-overflow-tooltip />
+        <el-table-column label="汇报内容" min-width="260" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="content-summary">{{ stripMarkdown(row.content) || '（无详细内容）' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="row.status === 'presented' ? 'success' : 'info'">
@@ -85,12 +89,25 @@
           <el-input v-model="form.title" placeholder="请输入事项标题" maxlength="100" show-word-limit />
         </el-form-item>
         <el-form-item label="汇报内容">
-          <el-input
-            v-model="form.content"
-            type="textarea"
-            :rows="6"
-            placeholder="请输入本次会议的汇报内容、进展、风险或需协调事项等"
-          />
+          <div class="md-input-wrap">
+            <div class="md-switch-bar">
+              <el-radio-group v-model="mdMode" size="small">
+                <el-radio-button value="edit">编辑</el-radio-button>
+                <el-radio-button value="preview">预览</el-radio-button>
+              </el-radio-group>
+            </div>
+            <el-input
+              v-if="mdMode === 'edit'"
+              v-model="form.content"
+              type="textarea"
+              :rows="8"
+              placeholder="支持 Markdown 语法，便于 PPT 展示突出重点：**加粗**、## 小标题、- 列表、| 表格 | 等"
+            />
+            <div v-else class="md-preview">
+              <div v-if="form.content.trim()" class="md-body" v-html="previewHtml"></div>
+              <span v-else class="md-preview-empty">（暂无内容）</span>
+            </div>
+          </div>
         </el-form-item>
         <el-form-item v-if="isCreator" label="录入组织" required>
           <el-select v-model="editOrgId" placeholder="选择要挂载的参会组织" style="width: 100%">
@@ -117,6 +134,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { meetingApi, itemApi } from '../api'
 import { useAuthStore } from '../stores/auth'
 import AttachmentManager from '../components/AttachmentManager.vue'
+import { renderMarkdown, stripMarkdown } from '../utils/md'
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -127,6 +145,8 @@ const items = ref([])
 const dialogVisible = ref(false)
 const saving = ref(false)
 const form = reactive({ id: null, title: '', content: '', sort_order: 0 })
+const mdMode = ref('edit') // edit / preview
+const previewHtml = computed(() => renderMarkdown(form.content))
 // 会议创建者（含管理员）可为自己的会议录入汇报，需选择挂载的参会组织
 const isCreator = computed(() => auth.isAdmin || meeting.value?.creator_id === auth.user?.id)
 const editOrgId = ref(null)
@@ -173,11 +193,13 @@ async function load() {
 
 function openCreate() {
   Object.assign(form, { id: null, title: '', content: '', sort_order: 0 })
+  mdMode.value = 'edit'
   dialogVisible.value = true
 }
 
 function openEdit(row) {
   Object.assign(form, { id: row.id, title: row.title, content: row.content, sort_order: row.sort_order })
+  mdMode.value = 'edit'
   dialogVisible.value = true
 }
 
@@ -252,5 +274,34 @@ onMounted(load)
 }
 .tip {
   margin-bottom: 8px;
+}
+.content-summary {
+  display: block;
+  line-height: 1.5;
+  max-height: 60px;
+  overflow: hidden;
+  white-space: normal;
+}
+.md-input-wrap {
+  width: 100%;
+}
+.md-switch-bar {
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: flex-end;
+}
+.md-preview {
+  border: 1px solid #e4e7ed;
+  border-radius: 4px;
+  background: #fafafa;
+  padding: 10px 14px;
+  min-height: 180px;
+  max-height: 360px;
+  overflow: auto;
+  font-size: 14px;
+}
+.md-preview-empty {
+  color: #c0c4cc;
+  font-size: 13px;
 }
 </style>

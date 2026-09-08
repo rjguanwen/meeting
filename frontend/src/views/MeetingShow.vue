@@ -27,7 +27,7 @@
         <!-- 内容区 -->
         <div class="slide-body">
           <h2 class="slide-title">{{ slide.title }}</h2>
-          <p v-if="slide.content" class="slide-content">{{ slide.content }}</p>
+          <div v-if="slide.content && slide.content.trim()" class="slide-content md-body" v-html="renderMarkdown(slide.content)"></div>
           <el-empty v-else description="（无详细汇报内容）" :image-size="60" />
           <div class="slide-reporter">汇报人：{{ slide.reporter || '—' }}</div>
         </div>
@@ -143,6 +143,7 @@ import { ElMessage } from 'element-plus'
 import { meetingApi, conclusionApi, userApi } from '../api'
 import { useAuthStore } from '../stores/auth'
 import { isImage, isVideo, isAudio, isPdf, fmtSize, getFileUrl, downloadFile, openFileInNewTab } from '../utils/file'
+import { renderMarkdown } from '../utils/md'
 
 const route = useRoute()
 const router = useRouter()
@@ -404,10 +405,9 @@ onBeforeUnmount(() => {
   margin: 0 0 16px;
 }
 .slide-content {
-  font-size: 16px;
+  font-size: 17px;
   line-height: 1.8;
   color: #303133;
-  white-space: pre-wrap;
   margin: 0;
 }
 .slide-reporter {

@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +12,35 @@ import (
 
 	"meetingbackend/internal/model"
 )
+
+// atxHeadingRE 匹配 Markdown ATX 标题行（# 开头，前面最多 3 个空格）。
+var atxHeadingRE = regexp.MustCompile(`^\s{0,3}#{1,6}\s+(.*)$`)
+
+// flattenReportHeadings 将汇报内容里的 Markdown 标题行转成加粗文本，
+// 避免内容中的 #/## 破坏会议纪要自身的标题层级（纪要结构：# 会议 → ## 章节 → ### 组织）。
+// 保留列表、表格、引用、行内加粗等正文格式；代码块内的 # 不会被误处理。
+func flattenReportHeadings(content string) string {
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	var out []string
+	inCode := false
+	for _, ln := range lines {
+		trimmed := strings.TrimSpace(ln)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inCode = !inCode
+		}
+		if !inCode {
+			if m := atxHeadingRE.FindStringSubmatch(ln); m != nil {
+				text := strings.TrimSpace(m[1])
+				if text != "" {
+					out = append(out, "**"+text+"**")
+					continue
+				}
+			}
+		}
+		out = append(out, ln)
+	}
+	return strings.Join(out, "\n")
+}
 
 // buildMinutes 根据会议信息生成 Markdown 纪要
 func buildMinutes(meeting *model.Meeting, orgs []model.Organization, items []model.ReportItem, conclusions []model.Conclusion) string {
@@ -64,7 +94,9 @@ func buildMinutes(meeting *model.Meeting, orgs []model.Organization, items []mod
 		for j, it := range blk.items {
 			fmt.Fprintf(&b, "**%d.%d %s**\n\n", i+1, j+1, it.Title)
 			if strings.TrimSpace(it.Content) != "" {
-				fmt.Fprintf(&b, "%s\n\n", it.Content)
+				// 汇报内容支持 Markdown，但其中标题行需扁平化为加粗，
+				// 以免破坏纪要自身层级
+				fmt.Fprintf(&b, "%s\n\n", flattenReportHeadings(it.Content))
 			}
 			concs := concByItem[it.ID]
 			if len(concs) > 0 {
