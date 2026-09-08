@@ -306,7 +306,20 @@ function deleteConclusion(cc) {
   })
 }
 
+// 是否在可输入控件内（输入框/文本域/下拉/可编辑元素），此时不响应翻页快捷键
+function isTypingTarget(e) {
+  const el = e.target
+  if (!el || el === document.body) return false
+  const tag = el.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+  return el.isContentEditable === true
+}
+
 function onKeydown(e) {
+  // 光标在输入框等控件中时，方向键/空格用于文本编辑，不触发翻页
+  if (isTypingTarget(e) && e.key !== 'Escape') {
+    return
+  }
   if (e.key === 'Escape') {
     // ESC 退出展示，返回会议详情页
     exitShow()
