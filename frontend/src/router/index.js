@@ -20,6 +20,7 @@ const routes = [
       { path: 'meetings', name: 'meetings', component: () => import('../views/MeetingList.vue'), meta: { title: '会议管理' } },
       { path: 'meetings/:id', name: 'meeting-detail', component: () => import('../views/MeetingDetail.vue'), meta: { title: '会议详情' } },
       { path: 'entry/:id', name: 'report-entry', component: () => import('../views/ReportEntry.vue'), meta: { title: '汇报事项录入' } },
+      { path: 'guide', name: 'guide', component: () => import('../views/Guide.vue'), meta: { title: '使用手册' } },
     ],
   },
   {

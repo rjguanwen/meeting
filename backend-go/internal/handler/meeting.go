@@ -428,7 +428,7 @@ func (h *Handler) FinishMeeting(c *gin.Context) {
 }
 
 // ArchiveMeeting POST /api/meetings/:id/archive 归档会议（管理员）
-// 状态流转：draft / ongoing / finished -> archived
+// 状态流转：仅 finished -> archived；未结束的会议不允许归档。
 // 归档后材料与纪要只读。
 func (h *Handler) ArchiveMeeting(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
@@ -443,6 +443,10 @@ func (h *Handler) ArchiveMeeting(c *gin.Context) {
 	}
 	if meeting.Status == model.MeetingArchived {
 		badRequest(c, "会议已归档")
+		return
+	}
+	if meeting.Status != model.MeetingFinished {
+		badRequest(c, "仅已结束的会议可以归档")
 		return
 	}
 	// 微盘自动上传：如需纪要且尚未生成，先自动生成一份（不阻塞归档）

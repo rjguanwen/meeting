@@ -47,7 +47,7 @@
           结束会议
         </el-button>
         <el-button
-          v-if="meeting.status !== 'archived'"
+          v-if="meeting.status === 'finished'"
           type="danger"
           :icon="FolderChecked"
           @click="archiveMeeting"
@@ -417,7 +417,8 @@ async function finishMeeting() {
   await load()
 }
 
-// 归档：若尚未生成纪要且当前可生成（进行中/已结束），询问是否先生成
+// 归档：若尚未生成纪要且当前可生成（进行中/已结束），询问是否先生成；
+// 无论纪要是否已生成，归档前都需用户确认「归档后纪要不可修改」。
 async function archiveMeeting() {
   if (!minutes.value.content && canGenerateMinutes.value) {
     try {
@@ -438,6 +439,19 @@ async function archiveMeeting() {
         return // 关闭对话框，取消归档
       }
     }
+  }
+  try {
+    await ElMessageBox.confirm(
+      `会议归档后，会议纪要将无法修改（材料与纪要均只读）。确定要归档会议「${meeting.value?.title || ''}」吗？`,
+      '会议归档',
+      {
+        confirmButtonText: '确认归档',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return // 用户取消归档
   }
   await meetingApi.archive(meetingId)
   ElMessage.success('会议已归档')
