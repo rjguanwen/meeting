@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,13 +24,31 @@ type UserContext struct {
 	OrgID    *uint
 }
 
+// cacheTTL 用户信息缓存有效期：缓存命中可避免每请求查库，同时保证角色/停用变更最多延迟一个 TTL 生效。
+const cacheTTL = 30 * time.Second
+
+type cachedUser struct {
+	uc      *UserContext
+	expires time.Time
+}
+
 type Auth struct {
 	cfg *config.Config
 	db  *gorm.DB
+
+	mu    sync.RWMutex
+	cache map[uint]cachedUser
 }
 
 func NewAuth(cfg *config.Config, db *gorm.DB) *Auth {
-	return &Auth{cfg: cfg, db: db}
+	return &Auth{cfg: cfg, db: db, cache: make(map[uint]cachedUser)}
+}
+
+// InvalidateUser 主动失效指定用户的鉴权缓存（角色变更 / 停用时调用）。
+func (a *Auth) InvalidateUser(userID uint) {
+	a.mu.Lock()
+	delete(a.cache, userID)
+	a.mu.Unlock()
 }
 
 // CORS 跨域中间件
@@ -106,18 +125,32 @@ func (a *Auth) currentUser(c *gin.Context) (*UserContext, bool) {
 	if !ok {
 		return nil, false
 	}
+	userID := uint(sub)
+
+	// 优先读缓存，命中且未过期直接返回，避免每请求查库
+	a.mu.RLock()
+	if cu, ok := a.cache[userID]; ok && time.Now().Before(cu.expires) {
+		a.mu.RUnlock()
+		return cu.uc, true
+	}
+	a.mu.RUnlock()
+
 	var user model.User
-	if err := a.db.First(&user, uint(sub)).Error; err != nil {
+	if err := a.db.First(&user, userID).Error; err != nil {
 		return nil, false
 	}
 	if !user.IsActive {
 		return nil, false
 	}
-	return &UserContext{
+	uc := &UserContext{
 		ID:       user.ID,
 		Username: user.Username,
 		Name:     user.Name,
 		Role:     user.Role,
 		OrgID:    user.OrgID,
-	}, true
+	}
+	a.mu.Lock()
+	a.cache[userID] = cachedUser{uc: uc, expires: time.Now().Add(cacheTTL)}
+	a.mu.Unlock()
+	return uc, true
 }

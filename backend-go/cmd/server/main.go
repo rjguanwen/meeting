@@ -1,7 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -34,8 +40,32 @@ func main() {
 	h.RegisterRoutes(r)
 
 	addr := ":" + cfg.Port
-	log.Printf("%s 已启动，监听 %s", cfg.ProjectName, addr)
-	if err := r.Run(addr); err != nil {
-		log.Fatalf("run server: %v", err)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
+
+	go func() {
+		log.Printf("%s 已启动，监听 %s", cfg.ProjectName, addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("run server: %v", err)
+		}
+	}()
+
+	// 优雅退出：收到信号后停服并 flush 剩余日志
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("收到退出信号，正在关闭...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("server shutdown: %v", err)
+	}
+	h.Close() // 关闭日志 worker，flush 剩余日志
+	log.Println("已退出")
 }

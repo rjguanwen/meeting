@@ -1,5 +1,7 @@
 # Go
 backend-go/meeting.db
+backend-go/meeting.db-shm
+backend-go/meeting.db-wal
 backend-go/meeting_server.log
 backend-go/server
 backend-go/uploads/

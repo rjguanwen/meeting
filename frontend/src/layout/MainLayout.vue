@@ -50,7 +50,7 @@
         <div class="page-title">{{ pageTitle }}</div>
         <el-dropdown @command="onCommand">
           <span class="user-info">
-            <el-avatar :size="30" class="avatar">{{ avatarText }}</el-avatar>
+            <el-avatar :size="30" :src="avatarUrl(auth.user?.avatar)" class="avatar">{{ avatarText }}</el-avatar>
             <span class="name">{{ auth.user?.name || auth.user?.username }}</span>
             <el-tag size="small" :type="auth.isAdmin ? 'danger' : 'success'">
               {{ roleText }}
@@ -59,6 +59,7 @@
           </span>
           <template #dropdown>
             <el-dropdown-menu>
+              <el-dropdown-item command="profile">个人中心</el-dropdown-item>
               <el-dropdown-item command="changePassword">修改密码</el-dropdown-item>
               <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
             </el-dropdown-menu>
@@ -95,7 +96,7 @@
 import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { authApi } from '../api'
+import { authApi, avatarUrl } from '../api'
 import { useAuthStore } from '../stores/auth'
 
 const route = useRoute()
@@ -148,6 +149,10 @@ async function savePassword() {
 }
 
 function onCommand(cmd) {
+  if (cmd === 'profile') {
+    router.push('/profile')
+    return
+  }
   if (cmd === 'changePassword') {
     openChangePassword()
     return

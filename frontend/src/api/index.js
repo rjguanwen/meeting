@@ -45,6 +45,20 @@ export const authApi = {
   },
   me: () => api.get('/auth/me'),
   changePassword: (data) => api.patch('/auth/password', data),
+  updateProfile: (data) => api.patch('/auth/profile', data),
+  updateSecurity: (data) => api.patch('/auth/security', data),
+  uploadAvatar: (file) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.post('/auth/avatar', form)
+  },
+  forgotQuestion: (username) => api.post('/auth/forgot-question', { username }),
+  forgotReset: (data) => api.post('/auth/forgot-reset', data),
+}
+
+// 头像访问地址（公开接口，无需 token）
+export function avatarUrl(filename) {
+  return filename ? `/api/avatar/${filename}` : ''
 }
 
 // ===== 组织 =====

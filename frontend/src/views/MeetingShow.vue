@@ -151,7 +151,6 @@ const auth = useAuthStore()
 const meetingId = route.params.id
 
 const material = ref(null)
-const meeting = ref(null)
 const current = ref(0)
 const allConclusions = ref([])
 const addingCC = ref(false)
@@ -192,11 +191,11 @@ async function loadUsers() {
   }
 }
 
-const isArchived = computed(() => meeting.value?.status === 'archived')
+const isArchived = computed(() => material.value?.status === 'archived')
 // 结论录入仅限进行中的会议
-const canEditConclusion = computed(() => meeting.value?.status === 'ongoing')
+const canEditConclusion = computed(() => material.value?.status === 'ongoing')
 const conclusionReadonlyTip = computed(() => {
-  const st = meeting.value?.status
+  const st = material.value?.status
   if (st === 'archived') return '会议已归档，讨论结论只读，不能再录入。'
   if (st === 'finished') return '会议已结束，讨论结论只读，不能再录入。'
   return '会议尚未开始，讨论结论在会议进行中录入。'
@@ -222,22 +221,23 @@ async function loadSlideAttachments() {
     else if (isPdf(att)) type = 'pdf'
     return { ...att, type, url: '' }
   })
-  for (const att of slideAttachments.value) {
-    try {
-      att.url = await getFileUrl(att.id)
-    } catch {
-      att.url = ''
-    }
-  }
+  // 并行获取附件 URL（getFileUrl 内部有 urlCache，重复访问不重复下载）
+  await Promise.all(
+    slideAttachments.value.map(async (att) => {
+      try {
+        att.url = await getFileUrl(att.id)
+      } catch {
+        att.url = ''
+      }
+    }),
+  )
 }
 
 async function load() {
-  // 展示页只读获取材料（生成操作在详情页，遵守次数限制）
+  // 展示页只读获取材料（生成操作在详情页，遵守次数限制）；
+  // 会议状态已随材料返回，无需再拉取整份会议详情。
   material.value = await meetingApi.materialView(meetingId)
-  meeting.value = await meetingApi.get(meetingId)
-  await loadConclusions()
-  await loadSlideAttachments()
-  await loadUsers()
+  await Promise.all([loadConclusions(), loadSlideAttachments(), loadUsers()])
 }
 
 // 图片大图预览

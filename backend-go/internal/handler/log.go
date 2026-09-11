@@ -11,6 +11,58 @@ import (
 	"meetingbackend/internal/model"
 )
 
+// enqueueLog 将日志写入异步队列；队列满时降级为同步写，保证不丢失。
+func (h *Handler) enqueueLog(entry *model.OperationLog) {
+	select {
+	case h.logCh <- entry:
+	default:
+		_ = h.db.Create(entry).Error
+	}
+}
+
+// logWorker 后台批量落盘操作日志，避免每次写操作被日志写入拖慢。
+func (h *Handler) logWorker() {
+	ticker := time.NewTicker(logFlushInterval)
+	defer ticker.Stop()
+	var batch []*model.OperationLog
+
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		if err := h.db.CreateInBatches(batch, logBatchSize).Error; err != nil {
+			// 批量失败时逐条重试，尽量保留日志
+			for _, e := range batch {
+				_ = h.db.Create(e).Error
+			}
+		}
+		batch = batch[:0]
+	}
+
+	for {
+		select {
+		case e := <-h.logCh:
+			batch = append(batch, e)
+			if len(batch) >= logBatchSize {
+				flush()
+			}
+		case <-ticker.C:
+			flush()
+		case <-h.logDone:
+			// 退出前把队列中剩余日志全部 flush
+			for {
+				select {
+				case e := <-h.logCh:
+					batch = append(batch, e)
+				default:
+					flush()
+					return
+				}
+			}
+		}
+	}
+}
+
 // logRecord 写入一条操作日志。
 // 优先使用登录用户；登录类动作（login/login_fail）传入 userID=0、username 单独指定。
 func (h *Handler) logRecord(c *gin.Context, action, targetType string, targetID uint, detail string) {
@@ -29,7 +81,7 @@ func (h *Handler) logRecord(c *gin.Context, action, targetType string, targetID 
 	} else {
 		entry.Username = c.PostForm("username")
 	}
-	_ = h.db.Create(entry).Error
+	h.enqueueLog(entry)
 }
 
 // logLoginRecord 登录类日志（可指定用户名，登录失败时无登录态）。
@@ -41,7 +93,7 @@ func (h *Handler) logLoginRecord(c *gin.Context, action, username string, detail
 		IP:        clientIP(c),
 		CreatedAt: time.Now(),
 	}
-	_ = h.db.Create(entry).Error
+	h.enqueueLog(entry)
 }
 
 func truncateLog(s string, n int) string {

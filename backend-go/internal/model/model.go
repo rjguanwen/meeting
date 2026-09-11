@@ -69,6 +69,10 @@ type User struct {
 	Role           string    `gorm:"size:16;default:member" json:"role"`
 	OrgID          *uint     `gorm:"index" json:"org_id"` // 非管理员所属组织，admin 为 nil
 	IsActive       bool      `gorm:"default:true" json:"is_active"`
+	Avatar         string    `gorm:"size:255" json:"avatar"`         // 头像文件名（存于 uploads/avatars，空则显示默认）
+	PasswordHint   string    `gorm:"size:255" json:"password_hint"`  // 密码提示词（用户自助设置）
+	SecurityQuestion string  `gorm:"size:255" json:"security_question"` // 安全找回问题
+	SecurityAnswer string    `gorm:"size:255" json:"-"`              // 安全答案哈希（bcrypt）
 	CreatedAt      time.Time `json:"created_at"`
 
 	Org *Organization `gorm:"foreignKey:OrgID" json:"org,omitempty"`
@@ -83,6 +87,19 @@ func (u *User) CheckPassword(password string) bool {
 func (u *User) SetPassword(password string) error {
 	u.HashedPassword = hashPassword(password)
 	return nil
+}
+
+// SetSecurityAnswer 设置安全答案（哈希存储）。
+func (u *User) SetSecurityAnswer(answer string) {
+	u.SecurityAnswer = hashPassword(answer)
+}
+
+// CheckSecurityAnswer 校验安全答案。
+func (u *User) CheckSecurityAnswer(answer string) bool {
+	if u.SecurityAnswer == "" || answer == "" {
+		return false
+	}
+	return bcrypt.CompareHashAndPassword([]byte(u.SecurityAnswer), []byte(answer)) == nil
 }
 
 func hashPassword(password string) string {
@@ -225,6 +242,9 @@ const (
 	LogRoomUpdate     = "room.update"
 	LogRoomDelete     = "room.delete"
 	LogPasswordChange = "password.change"
+	LogProfileUpdate  = "profile.update"   // 自助修改昵称/密码提示词/安全问答
+	LogAvatarUpdate   = "avatar.update"    // 自助上传头像
+	LogPasswordReset  = "password.reset"   // 安全问答找回密码
 )
 
 // WithOrganizationTree 将组织列表按部门-小组组装为树。

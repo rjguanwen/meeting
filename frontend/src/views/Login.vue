@@ -24,8 +24,55 @@
             登 录
           </el-button>
         </el-form-item>
+        <div class="login-links">
+          <el-link type="primary" :underline="false" @click="openForgot">忘记密码？</el-link>
+        </div>
       </el-form>
     </el-card>
+
+    <!-- 找回密码弹窗 -->
+    <el-dialog v-model="forgotVisible" title="找回密码" width="420px">
+      <!-- 第一步：输入用户名 -->
+      <el-form v-if="forgotStep === 1" label-width="90px">
+        <el-form-item label="用户名">
+          <el-input v-model="forgotForm.username" placeholder="请输入登录用户名" />
+        </el-form-item>
+      </el-form>
+
+      <!-- 第二步：回答安全问题 -->
+      <div v-else-if="forgotStep === 2">
+        <el-alert
+          v-if="forgotHint.password_hint"
+          :title="'密码提示：' + forgotHint.password_hint"
+          type="info"
+          :closable="false"
+          show-icon
+          class="forgot-hint"
+        />
+        <el-form label-width="90px">
+          <el-form-item label="安全问题">
+            <span class="sec-question">{{ forgotHint.security_question || '该账号未设置安全问题，无法自助找回，请联系管理员重置' }}</span>
+          </el-form-item>
+          <el-form-item v-if="forgotHint.security_question" label="安全答案">
+            <el-input v-model="forgotForm.security_answer" placeholder="请输入安全答案" />
+          </el-form-item>
+          <el-form-item v-if="forgotHint.security_question" label="新密码">
+            <el-input v-model="forgotForm.new_password" type="password" show-password placeholder="至少 6 位" />
+          </el-form-item>
+        </el-form>
+      </div>
+
+      <template #footer>
+        <template v-if="forgotStep === 1">
+          <el-button @click="forgotVisible = false">取消</el-button>
+          <el-button type="primary" :loading="forgotLoading" @click="stepQueryQuestion">下一步</el-button>
+        </template>
+        <template v-else>
+          <el-button @click="forgotStep = 1">上一步</el-button>
+          <el-button v-if="forgotHint.security_question" type="primary" :loading="forgotLoading" @click="doReset">重置密码</el-button>
+        </template>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -35,6 +82,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { User, Lock } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
+import { authApi } from '../api'
 
 const formRef = ref()
 const router = useRouter()
@@ -57,6 +105,59 @@ async function onLogin() {
     router.push(route.query.redirect || '/dashboard')
   } finally {
     loading.value = false
+  }
+}
+
+// 找回密码
+const forgotVisible = ref(false)
+const forgotStep = ref(1)
+const forgotLoading = ref(false)
+const forgotForm = reactive({ username: '', security_answer: '', new_password: '' })
+const forgotHint = reactive({ password_hint: '', security_question: '' })
+
+function openForgot() {
+  forgotStep.value = 1
+  forgotVisible.value = true
+  Object.assign(forgotForm, { username: '', security_answer: '', new_password: '' })
+  Object.assign(forgotHint, { password_hint: '', security_question: '' })
+}
+
+async function stepQueryQuestion() {
+  if (!forgotForm.username.trim()) {
+    ElMessage.warning('请输入用户名')
+    return
+  }
+  forgotLoading.value = true
+  try {
+    const data = await authApi.forgotQuestion(forgotForm.username.trim())
+    forgotHint.password_hint = data.password_hint
+    forgotHint.security_question = data.security_question
+    forgotStep.value = 2
+  } finally {
+    forgotLoading.value = false
+  }
+}
+
+async function doReset() {
+  if (!forgotForm.security_answer) {
+    ElMessage.warning('请输入安全答案')
+    return
+  }
+  if (forgotForm.new_password.length < 6) {
+    ElMessage.warning('新密码至少 6 位')
+    return
+  }
+  forgotLoading.value = true
+  try {
+    await authApi.forgotReset({
+      username: forgotForm.username.trim(),
+      security_answer: forgotForm.security_answer,
+      new_password: forgotForm.new_password,
+    })
+    ElMessage.success('密码已重置，请使用新密码登录')
+    forgotVisible.value = false
+  } finally {
+    forgotLoading.value = false
   }
 }
 </script>
@@ -88,5 +189,15 @@ async function onLogin() {
 }
 .login-btn {
   width: 100%;
+}
+.login-links {
+  text-align: right;
+}
+.forgot-hint {
+  margin-bottom: 14px;
+}
+.sec-question {
+  color: #303133;
+  line-height: 1.6;
 }
 </style>

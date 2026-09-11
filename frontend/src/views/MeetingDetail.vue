@@ -347,10 +347,16 @@ function fmtTime(t) {
 }
 
 async function load() {
-  meeting.value = await meetingApi.get(meetingId)
-  items.value = await itemApi.list(meetingId)
-  conclusions.value = await conclusionApi.list(meetingId)
-  const m = await minutesApi.get(meetingId)
+  // 并行拉取，减少首屏串行等待
+  const [mtg, its, ccs, m] = await Promise.all([
+    meetingApi.get(meetingId),
+    itemApi.list(meetingId),
+    conclusionApi.list(meetingId),
+    minutesApi.get(meetingId),
+  ])
+  meeting.value = mtg
+  items.value = its
+  conclusions.value = ccs
   if (m && m.content) minutes.value = m
 }
 

@@ -31,6 +31,7 @@ type MaterialData struct {
 	Title       string          `json:"title"`
 	Location    string          `json:"location"`     // 会议地点
 	MeetingTime string          `json:"meeting_time"` // 会议时间
+	Status      string          `json:"status"`       // 会议状态，供展示页直接判断只读/录入
 	Slides      []MaterialSlide `json:"slides"`
 	Total       int             `json:"total"`
 }
@@ -110,6 +111,7 @@ func (h *Handler) buildMaterialData(meeting *model.Meeting, allowedOrgIDs map[ui
 		Title:       meeting.Title,
 		Location:    meeting.Location,
 		MeetingTime: meeting.MeetingTime.Format("2006-01-02 15:04"),
+		Status:      meeting.Status,
 		Slides:      slides,
 		Total:       len(slides),
 	}

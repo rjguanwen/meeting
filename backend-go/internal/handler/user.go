@@ -172,6 +172,7 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "保存用户失败")
 		return
 	}
+	h.auth.InvalidateUser(user.ID) // 角色/状态变更立即生效，无需等待缓存 TTL
 	h.db.Preload("Org").First(&user, user.ID)
 	h.logRecord(c, model.LogUserUpdate, "user", user.ID, "修改账号："+user.Username)
 	c.JSON(http.StatusOK, toUserOut(&user))

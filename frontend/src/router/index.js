@@ -21,6 +21,7 @@ const routes = [
       { path: 'meetings/:id', name: 'meeting-detail', component: () => import('../views/MeetingDetail.vue'), meta: { title: '会议详情' } },
       { path: 'entry/:id', name: 'report-entry', component: () => import('../views/ReportEntry.vue'), meta: { title: '汇报事项录入' } },
       { path: 'guide', name: 'guide', component: () => import('../views/Guide.vue'), meta: { title: '使用手册' } },
+      { path: 'profile', name: 'profile', component: () => import('../views/Profile.vue'), meta: { title: '个人中心' } },
     ],
   },
   {
