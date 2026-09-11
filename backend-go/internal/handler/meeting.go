@@ -14,12 +14,14 @@ import (
 )
 
 type meetingReq struct {
-	Title           string          `json:"title" binding:"required"`
-	Description     string          `json:"description"`
-	MeetingTime     *model.DateTime `json:"meeting_time"`
-	Location        string          `json:"location"`
-	IsConfidential  *bool           `json:"is_confidential"` // 保密会议：仅参会组织负责人可查看
-	OrgIDs          []uint          `json:"org_ids"`         // 参会组织（创建/编辑时设置）
+	Title       string          `json:"title" binding:"required"`
+	MeetingTime *model.DateTime `json:"meeting_time"`
+	// Description / Location 用指针区分「未传」与「传空值」：
+	// PATCH 语义下未传不应覆盖原值（否则编辑会议会丢失尚未在表单中展示的描述）。
+	Description    *string `json:"description"`
+	Location       *string `json:"location"`
+	IsConfidential *bool   `json:"is_confidential"` // 保密会议：仅参会组织负责人可查看
+	OrgIDs         []uint  `json:"org_ids"`         // 参会组织（创建/编辑时设置）
 }
 
 // CreateMeeting POST /api/meetings 创建会议（管理员）
@@ -37,11 +39,15 @@ func (h *Handler) CreateMeeting(c *gin.Context) {
 	}
 	meeting := &model.Meeting{
 		Title:       req.Title,
-		Description: req.Description,
-		Location:    req.Location,
 		CreatorID:   ctx.ID,
 		MeetingTime: mt,
 		Status:      model.MeetingDraft,
+	}
+	if req.Description != nil {
+		meeting.Description = *req.Description
+	}
+	if req.Location != nil {
+		meeting.Location = *req.Location
 	}
 	if req.IsConfidential != nil {
 		meeting.IsConfidential = *req.IsConfidential
@@ -100,9 +106,10 @@ func (h *Handler) ListMeetings(c *gin.Context) {
 			c.JSON(http.StatusOK, []model.Meeting{})
 			return
 		}
-		orgIDs := []uint{*ctx.OrgID}
+		// 仅本组织直接参会的会议；刻意不沿部门→小组展开（业务裁定：部门负责人不需要看到下属小组的会议列表）。
+		// 与 meetingVisible 同口径，修改时必须两处同步，否则会出现「列表可见但详情 403」或反之。
 		sub := h.db.Model(&model.MeetingOrg{}).
-			Where("org_id IN ?", orgIDs).
+			Where("org_id = ?", *ctx.OrgID).
 			Select("meeting_id")
 		q = q.Where("id IN (?)", sub)
 		// 保密会议仅参会组织负责人可见，普通成员不可见
@@ -147,7 +154,9 @@ func (h *Handler) ListMeetings(c *gin.Context) {
 	c.JSON(http.StatusOK, meetings)
 }
 
-// GetMeeting GET /api/meetings/:id 会议详情（含参会组织、汇报事项）
+// GetMeeting GET /api/meetings/:id 会议详情（含参会组织）
+// 刻意不 Preload Items：汇报事项由 GET /api/meetings/:id/items 提供，那里按组织过滤；
+// 若随详情返回全量事项，会让同会议的其它组织（含下属/平级小组）看到彼此未公开的汇报正文。
 func (h *Handler) GetMeeting(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
@@ -155,8 +164,7 @@ func (h *Handler) GetMeeting(c *gin.Context) {
 		return
 	}
 	var meeting model.Meeting
-	if err := h.db.Preload("Orgs.Org").Preload("Items.Org").Preload("Items.Creator").
-		First(&meeting, id).Error; err != nil {
+	if err := h.db.Preload("Orgs.Org").First(&meeting, id).Error; err != nil {
 		notFound(c, "会议不存在")
 		return
 	}
@@ -169,7 +177,8 @@ func (h *Handler) GetMeeting(c *gin.Context) {
 }
 
 // meetingVisible 判断会议对用户是否可见（读权限）：
-// admin 全部可见；组织用户须为该会议参会组织；
+// admin 全部可见；组织用户须为自己所属组织**直接参会**，刻意不沿部门→小组展开
+// （业务裁定：部门负责人不需要看到下属小组的会议），与 ListMeetings 的过滤保持同口径；
 // 保密会议（IsConfidential）仅参会组织负责人（dept_leader/team_leader）可见，普通成员不可见。
 func (h *Handler) meetingVisible(role string, orgID *uint, meeting *model.Meeting) bool {
 	if role == model.RoleAdmin {
@@ -220,8 +229,13 @@ func (h *Handler) UpdateMeeting(c *gin.Context) {
 	if req.Title != "" {
 		meeting.Title = req.Title
 	}
-	meeting.Description = req.Description
-	meeting.Location = req.Location
+	// 未传字段保持原值，传空字符串则清空（前端表单会显式传 location）
+	if req.Description != nil {
+		meeting.Description = *req.Description
+	}
+	if req.Location != nil {
+		meeting.Location = *req.Location
+	}
 	if req.IsConfidential != nil {
 		meeting.IsConfidential = *req.IsConfidential
 	}
@@ -272,15 +286,34 @@ func (h *Handler) DeleteMeeting(c *gin.Context) {
 		badRequest(c, "会议已归档，不允许删除")
 		return
 	}
-	// 级联清理
-	h.db.Where("meeting_id = ?", id).Delete(&model.MeetingOrg{})
-	h.db.Where("meeting_id = ?", id).Delete(&model.ReportItem{})
-	h.db.Where("meeting_id = ?", id).Delete(&model.Conclusion{})
-	h.db.Where("meeting_id = ?", id).Delete(&model.MeetingMinutes{})
-	if err := h.db.Delete(&meeting).Error; err != nil {
+	// 级联清理：事项附件（含磁盘文件）、结论、纪要、汇报事项、参会组织。
+	// 附件文件在事务提交成功后再删，避免回滚时数据库仍指向已不存在的文件。
+	var attPaths []string
+	err = h.db.Transaction(func(tx *gorm.DB) error {
+		if attPaths, err = attachmentPaths(tx, "meeting_id = ?", meeting.ID); err != nil {
+			return err
+		}
+		for _, target := range []struct {
+			query string
+			model any
+		}{
+			{"meeting_id = ?", &model.ReportAttachment{}},
+			{"meeting_id = ?", &model.Conclusion{}},
+			{"meeting_id = ?", &model.MeetingMinutes{}},
+			{"meeting_id = ?", &model.ReportItem{}},
+			{"meeting_id = ?", &model.MeetingOrg{}},
+		} {
+			if err := tx.Where(target.query, meeting.ID).Delete(target.model).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Delete(&meeting).Error
+	})
+	if err != nil {
 		fail(c, http.StatusInternalServerError, "删除会议失败")
 		return
 	}
+	removeUploadFiles(attPaths)
 	h.logRecord(c, model.LogMeetingDelete, "meeting", meeting.ID, "删除会议："+meeting.Title)
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
@@ -368,6 +401,25 @@ func (h *Handler) SetMeetingOrgs(c *gin.Context) {
 	c.JSON(http.StatusOK, moList)
 }
 
+// transitionStatus 以条件更新推进会议状态（UPDATE ... WHERE id = ? AND status = ?）。
+// 读-判-写之间若已被其它请求推进，RowsAffected 为 0，返回 false，避免状态回退或重复执行副作用。
+// 成功时同步刷新内存中的 meeting，保证接口响应与之前一致。
+func (h *Handler) transitionStatus(meeting *model.Meeting, from, to string) (bool, error) {
+	now := time.Now()
+	res := h.db.Model(&model.Meeting{}).
+		Where("id = ? AND status = ?", meeting.ID, from).
+		Updates(map[string]any{"status": to, "updated_at": now})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return false, nil
+	}
+	meeting.Status = to
+	meeting.UpdatedAt = now
+	return true, nil
+}
+
 // StartMeeting POST /api/meetings/:id/start 开始会议（管理员）
 // 状态流转：draft -> ongoing
 func (h *Handler) StartMeeting(c *gin.Context) {
@@ -392,9 +444,13 @@ func (h *Handler) StartMeeting(c *gin.Context) {
 		badRequest(c, "该会议尚未录入任何汇报内容，无法开始")
 		return
 	}
-	meeting.Status = model.MeetingOngoing
-	if err := h.db.Save(&meeting).Error; err != nil {
+	ok, err := h.transitionStatus(&meeting, model.MeetingDraft, model.MeetingOngoing)
+	if err != nil {
 		fail(c, http.StatusInternalServerError, "更新会议状态失败")
+		return
+	}
+	if !ok { // 并发下状态已被其它请求推进
+		badRequest(c, "仅筹备中的会议可以开始")
 		return
 	}
 	h.logRecord(c, model.LogMeetingStart, "meeting", meeting.ID, "开始会议："+meeting.Title)
@@ -418,9 +474,13 @@ func (h *Handler) FinishMeeting(c *gin.Context) {
 		badRequest(c, "仅进行中的会议可以结束")
 		return
 	}
-	meeting.Status = model.MeetingFinished
-	if err := h.db.Save(&meeting).Error; err != nil {
+	ok, err := h.transitionStatus(&meeting, model.MeetingOngoing, model.MeetingFinished)
+	if err != nil {
 		fail(c, http.StatusInternalServerError, "更新会议状态失败")
+		return
+	}
+	if !ok { // 并发下状态已被其它请求推进
+		badRequest(c, "仅进行中的会议可以结束")
 		return
 	}
 	h.logRecord(c, model.LogMeetingFinish, "meeting", meeting.ID, "结束会议："+meeting.Title)
@@ -452,9 +512,13 @@ func (h *Handler) ArchiveMeeting(c *gin.Context) {
 	// 微盘自动上传：如需纪要且尚未生成，先自动生成一份（不阻塞归档）
 	h.ensureMinutesForUpload(&meeting)
 
-	meeting.Status = model.MeetingArchived
-	if err := h.db.Save(&meeting).Error; err != nil {
+	ok, err := h.transitionStatus(&meeting, model.MeetingFinished, model.MeetingArchived)
+	if err != nil {
 		fail(c, http.StatusInternalServerError, "更新会议状态失败")
+		return
+	}
+	if !ok { // 并发下已被其它请求归档，不重复上传微盘
+		badRequest(c, "会议已归档")
 		return
 	}
 	h.logRecord(c, model.LogMeetingArchive, "meeting", meeting.ID, "归档会议："+meeting.Title)

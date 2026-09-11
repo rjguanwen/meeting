@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Config 微盘调用配置。
@@ -161,11 +162,16 @@ func (c *Client) doJSON(req *http.Request, out any) error {
 	return nil
 }
 
+// truncate 截断到 n 字节，且不会切开多字节字符（中文错误响应直接按字节切会产生乱码）。
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	cut := n
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }
 
 // APIError 企业微信接口返回的业务错误。

@@ -78,6 +78,8 @@ func ensureIndexes(db *gorm.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_meetings_status_time ON meetings(status, meeting_time)`,
 		// 会议可见性判断 / 组织维度查询
 		`CREATE INDEX IF NOT EXISTS idx_meeting_orgs_meeting_org ON meeting_orgs(meeting_id, org_id)`,
+		// 负责人会议列表：按自己的 org_id 反查 meeting_id（与上面的索引方向不同，两者各自覆盖一侧查询）
+		`CREATE INDEX IF NOT EXISTS idx_meeting_orgs_org_meeting ON meeting_orgs(org_id, meeting_id)`,
 		// 材料组装：按会议取事项并按组织、排序分组
 		`CREATE INDEX IF NOT EXISTS idx_report_items_meeting_org_sort ON report_items(meeting_id, org_id, sort_order)`,
 	}

@@ -193,8 +193,10 @@ async function savePassword() {
   }
   pwdSaving.value = true
   try {
-    await authApi.changePassword({ old_password: pwdForm.old_password, new_password: pwdForm.new_password })
-    ElMessage.success('密码修改成功，下次登录请使用新密码')
+    const res = await authApi.changePassword({ old_password: pwdForm.old_password, new_password: pwdForm.new_password })
+    // 改密后旧令牌全部失效：用后端换发的新令牌保住当前设备会话，其它设备需重新登录
+    if (res?.access_token) auth.setToken(res.access_token)
+    ElMessage.success('密码修改成功，其它设备的登录已失效，下次请使用新密码登录')
     Object.assign(pwdForm, { old_password: '', new_password: '', confirm_password: '' })
   } finally {
     pwdSaving.value = false

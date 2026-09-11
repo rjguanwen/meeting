@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"meetingbackend/internal/middleware"
 	"meetingbackend/internal/model"
 )
 
@@ -61,6 +62,10 @@ func (h *Handler) CreateConclusion(c *gin.Context) {
 	ctx := currentUser(c)
 	if !h.meetingVisible(ctx.Role, ctx.OrgID, &meeting) {
 		forbidden(c, "保密会议仅参会组织负责人可操作")
+		return
+	}
+	if !h.conclusionWritable(ctx, &meeting) {
+		forbidden(c, "仅管理员或会议创建者可以录入讨论结论")
 		return
 	}
 	var req conclusionReq
@@ -119,7 +124,11 @@ func (h *Handler) UpdateConclusion(c *gin.Context) {
 		forbidden(c, "保密会议仅参会组织负责人可操作")
 		return
 	}
-	if !h.conclusionEditable(conc.MeetingID) {
+	if !h.conclusionWritable(ctx, &meeting) {
+		forbidden(c, "仅管理员或会议创建者可以修改讨论结论")
+		return
+	}
+	if meeting.Status != model.MeetingOngoing {
 		badRequest(c, "仅进行中的会议可以修改讨论结论")
 		return
 	}
@@ -171,7 +180,11 @@ func (h *Handler) DeleteConclusion(c *gin.Context) {
 		forbidden(c, "保密会议仅参会组织负责人可操作")
 		return
 	}
-	if !h.conclusionEditable(conc.MeetingID) {
+	if !h.conclusionWritable(ctx, &meeting) {
+		forbidden(c, "仅管理员或会议创建者可以删除讨论结论")
+		return
+	}
+	if meeting.Status != model.MeetingOngoing {
 		badRequest(c, "仅进行中的会议可以删除讨论结论")
 		return
 	}
@@ -183,19 +196,16 @@ func (h *Handler) DeleteConclusion(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+// conclusionWritable 结论与任务的写权限：仅管理员或该会议的创建者。
+// 读权限仍按会议可见性判定（meetingVisible），本方法只约束增删改。
+func (h *Handler) conclusionWritable(ctx *middleware.UserContext, meeting *model.Meeting) bool {
+	return ctx.Role == model.RoleAdmin || meeting.CreatorID == ctx.ID
+}
+
 // conclusionKindText 结论类型中文名
 func conclusionKindText(kind string) string {
 	if kind == model.ActionKind {
 		return "新任务"
 	}
 	return "讨论结论"
-}
-
-// conclusionEditable 结论是否可编辑：仅进行中允许
-func (h *Handler) conclusionEditable(meetingID uint) bool {
-	var meeting model.Meeting
-	if err := h.db.First(&meeting, meetingID).Error; err != nil {
-		return false
-	}
-	return meeting.Status == model.MeetingOngoing
 }

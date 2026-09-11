@@ -33,7 +33,13 @@ func main() {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
-	r.Use(middleware.CORS())
+	// multipart 内存缓冲上限（gin 默认 32MB）：超出部分落临时文件，降低并发上传时的内存峰值
+	r.MaxMultipartMemory = 4 << 20
+	// 只采信可信代理转发的 X-Forwarded-For，否则操作日志里的来源 IP 可被客户端随意伪造
+	if err := r.SetTrustedProxies(cfg.TrustedProxies); err != nil {
+		log.Fatalf("set trusted proxies: %v", err)
+	}
+	r.Use(middleware.CORS(cfg.CORSAllowedOrigins))
 
 	auth := middleware.NewAuth(cfg, db)
 	h := handler.New(db, cfg, auth)

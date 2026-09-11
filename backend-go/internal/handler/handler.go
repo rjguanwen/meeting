@@ -18,6 +18,9 @@ type Handler struct {
 	cfg  *config.Config
 	auth *middleware.Auth
 
+	// rateLimit 登录与找回密码的失败计数（进程内，重启即清空）
+	rateLimit *failLimiter
+
 	wedrive *wedrive.Client // 企业微信微盘客户端；未启用时为 nil
 
 	logCh   chan *model.OperationLog // 操作日志异步写队列
@@ -26,20 +29,21 @@ type Handler struct {
 
 // logQueueSize 日志异步队列容量；logBatchSize 批量写入条数；logFlushInterval 定时刷新间隔。
 const (
-	logQueueSize    = 1024
-	logBatchSize    = 100
+	logQueueSize     = 1024
+	logBatchSize     = 100
 	logFlushInterval = 200 * time.Millisecond
 )
 
 func New(db *gorm.DB, cfg *config.Config, auth *middleware.Auth) *Handler {
 	h := &Handler{
-		db:      db,
-		cfg:     cfg,
-		auth:    auth,
-		logCh:   make(chan *model.OperationLog, logQueueSize),
-		logDone: make(chan struct{}),
+		db:        db,
+		cfg:       cfg,
+		auth:      auth,
+		rateLimit: newFailLimiter(),
+		logCh:     make(chan *model.OperationLog, logQueueSize),
+		logDone:   make(chan struct{}),
 	}
-	if wc := cfg.WeCom; wc.AutoUpload && wc.APIBase != "" && wc.CorpID != "" && wc.CorpSecret != "" && wc.SpaceID != "" {
+	if wc := cfg.WeCom; wc.AutoUpload && wc.Enabled() {
 		h.wedrive = wedrive.New(wedrive.Config{
 			APIBase:     wc.APIBase,
 			APIPrefix:   wc.APIPrefix,

@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -24,6 +25,11 @@ type WeComConfig struct {
 	TimeoutSeconds    int    // WECOM_TIMEOUT_SECONDS 请求超时（秒）
 }
 
+// Enabled 判断微盘自动上传的必要配置是否齐备（不含 AutoUpload 开关本身）。
+func (c WeComConfig) Enabled() bool {
+	return c.APIBase != "" && c.CorpID != "" && c.CorpSecret != "" && c.SpaceID != ""
+}
+
 // Config 应用配置，全部来自环境变量，默认值适合本地开发。
 type Config struct {
 	ProjectName string
@@ -35,6 +41,13 @@ type Config struct {
 	AdminUsername string
 	AdminPassword string
 	AdminName     string
+
+	// CORSAllowedOrigins 跨域白名单（CORS_ALLOWED_ORIGINS，逗号分隔）。
+	// 为空表示维持通配 Access-Control-Allow-Origin: *（默认，兼容现有部署）。
+	CORSAllowedOrigins []string
+	// TrustedProxies 可信反向代理地址（TRUSTED_PROXIES，逗号分隔）。
+	// 仅采信来自这些地址的 X-Forwarded-For，避免操作日志中的 IP 被客户端伪造。
+	TrustedProxies []string
 
 	WeCom WeComConfig
 }
@@ -52,6 +65,10 @@ func Load() *Config {
 		AdminUsername: getEnv("INIT_ADMIN_USERNAME", "admin"),
 		AdminPassword: getEnv("INIT_ADMIN_PASSWORD", "admin123"),
 		AdminName:     getEnv("INIT_ADMIN_NAME", "系统管理员"),
+		// 默认仅信任同机 nginx（部署方式见 nginx-deploy.md：反代到 127.0.0.1:8002）；
+		// 显式设置 TRUSTED_PROXIES= 空值表示不信任任何代理。
+		CORSAllowedOrigins: getEnvList("CORS_ALLOWED_ORIGINS", nil),
+		TrustedProxies:     getEnvList("TRUSTED_PROXIES", []string{"127.0.0.1", "::1"}),
 		WeCom: WeComConfig{
 			AutoUpload:        getEnvBool("WECOM_AUTO_UPLOAD", false),
 			APIBase:           getEnv("WECOM_API_BASE", ""),
@@ -68,15 +85,29 @@ func Load() *Config {
 		},
 	}
 
-	if cfg.WeCom.AutoUpload {
-		if cfg.WeCom.APIBase == "" || cfg.WeCom.CorpID == "" || cfg.WeCom.CorpSecret == "" || cfg.WeCom.SpaceID == "" {
-			log.Println("[warn] WECOM_AUTO_UPLOAD=true 但 API_BASE/CORP_ID/CORP_SECRET/SPACE_ID 配置不完整，自动上传将停用")
-		}
+	if cfg.WeCom.AutoUpload && !cfg.WeCom.Enabled() {
+		log.Println("[warn] WECOM_AUTO_UPLOAD=true 但 API_BASE/CORP_ID/CORP_SECRET/SPACE_ID 配置不完整，自动上传将停用")
 	}
 	if cfg.SecretKey == "please-change-me-to-a-random-secret" {
 		log.Println("[warn] 请修改 SECRET_KEY 为强随机值")
 	}
 	return cfg
+}
+
+// getEnvList 读取逗号分隔的列表。
+// 变量未设置时返回 def；设置为空串表示明确的空列表（与未设置区分）。
+func getEnvList(key string, def []string) []string {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return def
+	}
+	var out []string
+	for _, item := range strings.Split(v, ",") {
+		if s := strings.TrimSpace(item); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func getEnvBool(key string, def bool) bool {

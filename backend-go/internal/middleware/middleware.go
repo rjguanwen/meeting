@@ -22,9 +22,12 @@ type UserContext struct {
 	Name     string
 	Role     string
 	OrgID    *uint
+	// tokenVersion 签发令牌时用户的版本号，与令牌中的 tv 声明不一致即失效（改密码后踢下线）
+	tokenVersion int
 }
 
-// cacheTTL 用户信息缓存有效期：缓存命中可避免每请求查库，同时保证角色/停用变更最多延迟一个 TTL 生效。
+// cacheTTL 用户信息缓存有效期：缓存命中可避免每请求查库。
+// 角色 / 停用 / 改密码等关键变更处会主动 InvalidateUser，最坏情况下也只延迟一个 TTL 生效。
 const cacheTTL = 30 * time.Second
 
 type cachedUser struct {
@@ -51,10 +54,33 @@ func (a *Auth) InvalidateUser(userID uint) {
 	a.mu.Unlock()
 }
 
-// CORS 跨域中间件
-func CORS() gin.HandlerFunc {
+// CORS 跨域中间件。
+// allowed 为空时保持通配 Access-Control-Allow-Origin: *（默认行为，兼容现有前后端分离部署）；
+// 配置白名单后仅回显命中的 Origin，并补 Vary: Origin 防止缓存串扰。
+func CORS(allowed []string) gin.HandlerFunc {
+	if len(allowed) == 0 {
+		return func(c *gin.Context) {
+			c.Header("Access-Control-Allow-Origin", "*")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			if c.Request.Method == http.MethodOptions {
+				c.AbortWithStatus(http.StatusNoContent)
+				return
+			}
+			c.Next()
+		}
+	}
+	set := make(map[string]struct{}, len(allowed))
+	for _, origin := range allowed {
+		set[origin] = struct{}{}
+	}
 	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
+		if origin := c.GetHeader("Origin"); origin != "" {
+			if _, ok := set[origin]; ok {
+				c.Header("Access-Control-Allow-Origin", origin)
+				c.Header("Vary", "Origin")
+			}
+		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		if c.Request.Method == http.MethodOptions {
@@ -65,10 +91,13 @@ func CORS() gin.HandlerFunc {
 	}
 }
 
-// CreateToken 生成 JWT，有效期 7 天
-func (a *Auth) CreateToken(userID uint) (string, error) {
+// CreateToken 生成 JWT，有效期 7 天。
+// tokenVersion 写入 tv 声明：用户改密码后库内版本自增，此前签发的令牌随之失效。
+// 升级前签发的令牌没有 tv 声明，校验时按 0 处理，部署后已登录用户不会掉线。
+func (a *Auth) CreateToken(userID uint, tokenVersion int) (string, error) {
 	claims := jwt.MapClaims{
 		"sub": userID,
+		"tv":  tokenVersion,
 		"exp": time.Now().Add(7 * 24 * time.Hour).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -126,11 +155,19 @@ func (a *Auth) currentUser(c *gin.Context) (*UserContext, bool) {
 		return nil, false
 	}
 	userID := uint(sub)
+	// 旧版令牌无 tv 声明，按 0 处理，保证平滑升级
+	var tokenVersion int
+	if v, ok := claims["tv"].(float64); ok {
+		tokenVersion = int(v)
+	}
 
 	// 优先读缓存，命中且未过期直接返回，避免每请求查库
 	a.mu.RLock()
 	if cu, ok := a.cache[userID]; ok && time.Now().Before(cu.expires) {
 		a.mu.RUnlock()
+		if cu.uc.tokenVersion != tokenVersion {
+			return nil, false // 令牌版本陈旧：密码已修改，需重新登录
+		}
 		return cu.uc, true
 	}
 	a.mu.RUnlock()
@@ -142,12 +179,16 @@ func (a *Auth) currentUser(c *gin.Context) (*UserContext, bool) {
 	if !user.IsActive {
 		return nil, false
 	}
+	if user.TokenVersion != tokenVersion {
+		return nil, false
+	}
 	uc := &UserContext{
-		ID:       user.ID,
-		Username: user.Username,
-		Name:     user.Name,
-		Role:     user.Role,
-		OrgID:    user.OrgID,
+		ID:           user.ID,
+		Username:     user.Username,
+		Name:         user.Name,
+		Role:         user.Role,
+		OrgID:        user.OrgID,
+		tokenVersion: user.TokenVersion,
 	}
 	a.mu.Lock()
 	a.cache[userID] = cachedUser{uc: uc, expires: time.Now().Add(cacheTTL)}

@@ -35,7 +35,8 @@ func (h *Handler) ListUsers(c *gin.Context) {
 }
 
 // validateUserRole 校验角色合法性及组织绑定关系，返回错误信息（空串表示合法）。
-func (h *Handler) validateUserRole(role string, orgID *uint, excludeUserID uint) string {
+// 一个部门/小组可设多个负责人，因此无需唯一性校验。
+func (h *Handler) validateUserRole(role string, orgID *uint) string {
 	switch role {
 	case model.RoleAdmin:
 		if orgID != nil {
@@ -61,8 +62,6 @@ func (h *Handler) validateUserRole(role string, orgID *uint, excludeUserID uint)
 			}
 			return "小组负责人必须选择小组"
 		}
-		// 一个部门/小组可设置多个负责人，无需唯一性校验
-		_ = excludeUserID
 		return ""
 	case model.RoleMember:
 		if orgID == nil {
@@ -98,7 +97,7 @@ func (h *Handler) CreateUser(c *gin.Context) {
 	if role == "" {
 		role = model.RoleMember
 	}
-	if msg := h.validateUserRole(role, req.OrgID, 0); msg != "" {
+	if msg := h.validateUserRole(role, req.OrgID); msg != "" {
 		badRequest(c, msg)
 		return
 	}
@@ -145,7 +144,7 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 	// 角色与所属组织可调整
 	if req.Role != "" {
 		role := req.Role
-		if msg := h.validateUserRole(role, req.OrgID, user.ID); msg != "" {
+		if msg := h.validateUserRole(role, req.OrgID); msg != "" {
 			badRequest(c, msg)
 			return
 		}
@@ -164,6 +163,7 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 			fail(c, http.StatusInternalServerError, "设置密码失败")
 			return
 		}
+		user.RevokeTokens() // 管理员重置密码后，该账号已签发的旧令牌同时失效
 	}
 	if req.IsActive != nil {
 		user.IsActive = *req.IsActive

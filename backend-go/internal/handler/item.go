@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"meetingbackend/internal/model"
 )
@@ -187,11 +188,25 @@ func (h *Handler) DeleteItem(c *gin.Context) {
 			return
 		}
 	}
-	h.db.Where("report_item_id = ?", id).Delete(&model.Conclusion{})
-	if err := h.db.Delete(&item).Error; err != nil {
+	// 级联清理：附件（含磁盘文件）与结论。附件文件在事务提交后删除。
+	var attPaths []string
+	err = h.db.Transaction(func(tx *gorm.DB) error {
+		if attPaths, err = attachmentPaths(tx, "report_item_id = ?", item.ID); err != nil {
+			return err
+		}
+		if err := tx.Where("report_item_id = ?", item.ID).Delete(&model.ReportAttachment{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("report_item_id = ?", item.ID).Delete(&model.Conclusion{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&item).Error
+	})
+	if err != nil {
 		fail(c, http.StatusInternalServerError, "删除汇报事项失败")
 		return
 	}
+	removeUploadFiles(attPaths)
 	h.logRecord(c, model.LogItemDelete, "item", item.ID, "删除汇报事项：「"+item.Title+"」")
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

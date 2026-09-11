@@ -62,18 +62,21 @@ type Organization struct {
 
 // User 用户账号。每个参会组织对应一个 leader 账号。
 type User struct {
-	ID             uint      `gorm:"primaryKey" json:"id"`
-	Username       string    `gorm:"size:64;uniqueIndex;not null" json:"username"`
-	HashedPassword string    `gorm:"size:255;not null" json:"-"`
-	Name           string    `gorm:"size:128" json:"name"`
-	Role           string    `gorm:"size:16;default:member" json:"role"`
-	OrgID          *uint     `gorm:"index" json:"org_id"` // 非管理员所属组织，admin 为 nil
-	IsActive       bool      `gorm:"default:true" json:"is_active"`
-	Avatar         string    `gorm:"size:255" json:"avatar"`         // 头像文件名（存于 uploads/avatars，空则显示默认）
-	PasswordHint   string    `gorm:"size:255" json:"password_hint"`  // 密码提示词（用户自助设置）
-	SecurityQuestion string  `gorm:"size:255" json:"security_question"` // 安全找回问题
-	SecurityAnswer string    `gorm:"size:255" json:"-"`              // 安全答案哈希（bcrypt）
-	CreatedAt      time.Time `json:"created_at"`
+	ID               uint   `gorm:"primaryKey" json:"id"`
+	Username         string `gorm:"size:64;uniqueIndex;not null" json:"username"`
+	HashedPassword   string `gorm:"size:255;not null" json:"-"`
+	Name             string `gorm:"size:128" json:"name"`
+	Role             string `gorm:"size:16;default:member" json:"role"`
+	OrgID            *uint  `gorm:"index" json:"org_id"` // 非管理员所属组织，admin 为 nil
+	IsActive         bool   `gorm:"default:true" json:"is_active"`
+	Avatar           string `gorm:"size:255" json:"avatar"`            // 头像文件名（存于 uploads/avatars，空则显示默认）
+	PasswordHint     string `gorm:"size:255" json:"password_hint"`     // 密码提示词（用户自助设置）
+	SecurityQuestion string `gorm:"size:255" json:"security_question"` // 安全找回问题
+	SecurityAnswer   string `gorm:"size:255" json:"-"`                 // 安全答案哈希（bcrypt）
+	// TokenVersion 令牌版本号：改密码 / 重置密码时自增，使此前签发的 JWT 立即失效。
+	// 新增列带默认值 0：存量数据与升级前签发的令牌（无 tv 声明，按 0 处理）均保持有效，可平滑升级。
+	TokenVersion int       `gorm:"default:0" json:"-"`
+	CreatedAt    time.Time `json:"created_at"`
 
 	Org *Organization `gorm:"foreignKey:OrgID" json:"org,omitempty"`
 }
@@ -94,6 +97,12 @@ func (u *User) SetSecurityAnswer(answer string) {
 	u.SecurityAnswer = hashPassword(answer)
 }
 
+// RevokeTokens 使该用户此前签发的全部令牌失效（紧接保存密码之后调用）。
+// 调用方需同时执行 auth.InvalidateUser，否则鉴权缓存会持有旧版本号。
+func (u *User) RevokeTokens() {
+	u.TokenVersion++
+}
+
 // CheckSecurityAnswer 校验安全答案。
 func (u *User) CheckSecurityAnswer(answer string) bool {
 	if u.SecurityAnswer == "" || answer == "" {
@@ -112,7 +121,7 @@ type Meeting struct {
 	ID                uint      `gorm:"primaryKey" json:"id"`
 	Title             string    `gorm:"size:255;not null" json:"title"`
 	Description       string    `gorm:"type:text" json:"description"`
-	Location          string    `gorm:"size:255" json:"location"`         // 会议地点
+	Location          string    `gorm:"size:255" json:"location"`             // 会议地点
 	IsConfidential    bool      `gorm:"default:false" json:"is_confidential"` // 保密会议：仅参会组织负责人可查看
 	CreatorID         uint      `gorm:"index" json:"creator_id"`
 	MeetingTime       time.Time `json:"meeting_time"` // 会议时间
@@ -242,9 +251,9 @@ const (
 	LogRoomUpdate     = "room.update"
 	LogRoomDelete     = "room.delete"
 	LogPasswordChange = "password.change"
-	LogProfileUpdate  = "profile.update"   // 自助修改昵称/密码提示词/安全问答
-	LogAvatarUpdate   = "avatar.update"    // 自助上传头像
-	LogPasswordReset  = "password.reset"   // 安全问答找回密码
+	LogProfileUpdate  = "profile.update" // 自助修改昵称/密码提示词/安全问答
+	LogAvatarUpdate   = "avatar.update"  // 自助上传头像
+	LogPasswordReset  = "password.reset" // 安全问答找回密码
 )
 
 // WithOrganizationTree 将组织列表按部门-小组组装为树。

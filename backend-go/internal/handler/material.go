@@ -36,7 +36,7 @@ type MaterialData struct {
 	Total       int             `json:"total"`
 }
 
-// buildMaterialData 组装会议材料（按部门→小组→事项组织成逐条页）
+// buildMaterialData 组装会议材料（按小组→部门→事项组织成逐条页）
 // allowedOrgIDs 为空(nil)时展示全部组织事项；非空时仅展示指定组织（用于负责人只读查看本部门）。
 func (h *Handler) buildMaterialData(meeting *model.Meeting, allowedOrgIDs map[uint]bool) MaterialData {
 	orgs, orgName, deptOf := h.meetingOrgs(meeting.ID)
@@ -117,7 +117,9 @@ func (h *Handler) buildMaterialData(meeting *model.Meeting, allowedOrgIDs map[ui
 	}
 }
 
-// meetingOrgs 返回参会组织列表及名称/部门归属映射
+// meetingOrgs 返回参会组织列表及名称/部门归属映射。
+// 展示顺序为小组在前、部门在后（type 取值 team/dept，desc 即 team 优先）：
+// 会上先逐条听各小组汇报，再由部门汇总；同一类型内按参会时的手动排序、再按组织 ID。
 func (h *Handler) meetingOrgs(meetingID uint) ([]model.Organization, map[uint]string, map[uint]uint) {
 	var orgs []model.Organization
 	h.db.
@@ -160,8 +162,20 @@ func (h *Handler) GenerateMaterial(c *gin.Context) {
 		return
 	}
 	if meeting.Status != model.MeetingDraft {
+		// 条件更新保证「仅可生成一次」在并发下也成立：只有把标记由 false 改为 true 的请求算正式生成
+		res := h.db.Model(&model.Meeting{}).
+			Where("id = ? AND material_generated = ?", meeting.ID, false).
+			Update("material_generated", true)
+		if res.Error != nil {
+			// 标记写入失败必须报错：否则「正式材料仅可生成一次」的约束会静默失效
+			fail(c, http.StatusInternalServerError, "记录材料生成状态失败")
+			return
+		}
+		if res.RowsAffected == 0 { // 并发的另一个请求已正式生成
+			badRequest(c, "会议已开始，正式会议材料仅可生成一次")
+			return
+		}
 		meeting.MaterialGenerated = true
-		h.db.Save(&meeting)
 	}
 	h.logRecord(c, model.LogMaterial, "meeting", meeting.ID, "生成会议材料："+meeting.Title)
 
@@ -196,6 +210,9 @@ func (h *Handler) GetMaterial(c *gin.Context) {
 
 // selfOrgIDs 返回负责人可查看的组织 ID 集合：
 // 绑定的组织若是部门，则包含该部门及其下所有小组；若是小组，仅自身。
+// 仅用于已通过 meetingVisible 门禁的会议**内部**材料过滤（部门汇总视角），
+// 不会让负责人多看到任何一个会议：只有部门自身也参会时，下属小组的事项才会出现在材料里。
+// （事项列表 ListItems 按 org_id 精确过滤、不做本展开，两者差异待产品确认。）
 func (h *Handler) selfOrgIDs(orgID uint) map[uint]bool {
 	ids := map[uint]bool{orgID: true}
 	var org model.Organization

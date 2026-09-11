@@ -24,6 +24,11 @@ export const useAuthStore = defineStore('auth', {
       this.user = await authApi.me()
       localStorage.setItem('user', JSON.stringify(this.user))
     },
+    // setToken 换发令牌（修改密码后旧令牌失效，当前设备用新令牌继续会话）
+    setToken(token) {
+      this.token = token
+      localStorage.setItem('token', token)
+    },
     logout() {
       this.token = ''
       this.user = null

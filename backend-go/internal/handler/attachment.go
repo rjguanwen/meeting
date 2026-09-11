@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"meetingbackend/internal/model"
 )
@@ -17,7 +19,48 @@ import (
 const (
 	maxAttachmentSize   = 5 * 1024 * 1024 // 单个附件 5MB
 	maxAttachmentsCount = 10              // 每个事项最多 10 个附件
+	// multipartOverhead 请求体余量：boundary、各 part 头部与字段名等开销
+	multipartOverhead = 1 << 20
 )
+
+const tooLargeMsg = "单个附件大小不能超过 5MB"
+
+// limitUploadBody 为上传请求设置请求体硬上限。
+// 不设上限时，超大 body 会在解析 multipart 阶段被整体读入内存/临时文件，构成资源耗尽风险；
+// 上限为「单文件大小 + multipart 开销」，因此合法大小的文件行为完全不变。
+func limitUploadBody(c *gin.Context, fileLimit int64) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, fileLimit+multipartOverhead)
+}
+
+// isBodyTooLarge 判断读取 multipart 时的错误是否由请求体超限引起，以便保持原有提示文案。
+func isBodyTooLarge(err error) bool {
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		return true
+	}
+	return strings.Contains(err.Error(), "message too large") ||
+		strings.Contains(err.Error(), "request body too large")
+}
+
+// removeUploadFiles 删除附件对应的磁盘文件（仅在数据库记录已删除后调用）。
+// 单个文件删除失败不影响业务主流程，忽略即可。
+func removeUploadFiles(paths []string) {
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		_ = os.Remove(p)
+	}
+}
+
+// attachmentPaths 取出待级联删除的附件文件路径。
+func attachmentPaths(tx *gorm.DB, query string, args ...any) ([]string, error) {
+	var paths []string
+	if err := tx.Model(&model.ReportAttachment{}).Where(query, args...).Pluck("file_path", &paths).Error; err != nil {
+		return nil, err
+	}
+	return paths, nil
+}
 
 // allowedExts 允许的附件扩展名（图片/视频/pdf/word/文本等常用格式）
 var allowedExts = map[string]bool{
@@ -105,8 +148,13 @@ func (h *Handler) UploadAttachment(c *gin.Context) {
 		return
 	}
 
+	limitUploadBody(c, maxAttachmentSize)
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
+		if isBodyTooLarge(err) {
+			badRequest(c, tooLargeMsg)
+			return
+		}
 		badRequest(c, "未接收到文件或文件字段名应为 file")
 		return
 	}
@@ -132,7 +180,24 @@ func (h *Handler) UploadAttachment(c *gin.Context) {
 	storedName := fmt.Sprintf("%d_%d%s", time.Now().UnixNano(), item.ID, ext)
 	dest := filepath.Join(dir, storedName)
 	if err := c.SaveUploadedFile(header, dest); err != nil {
+		os.Remove(dest)
+		if isBodyTooLarge(err) {
+			badRequest(c, tooLargeMsg)
+			return
+		}
 		fail(c, http.StatusInternalServerError, "保存附件失败")
+		return
+	}
+	// header.Size 是客户端声明值，可能偏小；以磁盘实际写入大小为准再校验一次
+	info, statErr := os.Stat(dest)
+	if statErr != nil {
+		os.Remove(dest)
+		fail(c, http.StatusInternalServerError, "保存附件失败")
+		return
+	}
+	if info.Size() > maxAttachmentSize {
+		os.Remove(dest)
+		badRequest(c, tooLargeMsg)
 		return
 	}
 
@@ -142,7 +207,7 @@ func (h *Handler) UploadAttachment(c *gin.Context) {
 		FileName:     filepath.Base(header.Filename),
 		StoredName:   storedName,
 		FilePath:     dest,
-		FileSize:     header.Size,
+		FileSize:     info.Size(),
 		MimeType:     header.Header.Get("Content-Type"),
 	}
 	if err := h.db.Create(att).Error; err != nil {

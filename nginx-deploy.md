@@ -52,9 +52,16 @@ SECRET_KEY=请替换为随机强密钥
 INIT_ADMIN_USERNAME=admin
 INIT_ADMIN_PASSWORD=请修改为强密码
 UPLOAD_DIR=uploads
+# 可信代理：默认 127.0.0.1,::1 已适配下文“nginx 与应用同机”的部署
+TRUSTED_PROXIES=127.0.0.1,::1
+# 前后端同域反代（如下文配置）无需设置跨域白名单，此项留空即可
+# CORS_ALLOWED_ORIGINS=
 ```
 
 > 生产环境务必修改 `SECRET_KEY` 与 `INIT_ADMIN_PASSWORD`（后者仅首次建库时写入，已存在数据时不会覆盖）。
+>
+> 若 nginx 与后端不在同一台机器（或 nginx 跑在 Docker 网络里），必须把它的地址加入 `TRUSTED_PROXIES`，
+> 否则操作日志里的 IP 会变成 nginx 的对端地址而不是真实客户端 IP。
 
 ### 3. 后端常驻服务（Linux systemd）
 

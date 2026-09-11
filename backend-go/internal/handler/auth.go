@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	maxAvatarSize   = 2 * 1024 * 1024 // 头像上限 2MB
+	maxAvatarSize      = 2 * 1024 * 1024 // 头像上限 2MB
 	avatarExtWhitelist = ".jpg,.jpeg,.png,.webp"
 )
 
@@ -56,6 +56,11 @@ func toUserOut(u *model.User) UserOut {
 func (h *Handler) Login(c *gin.Context) {
 	username := strings.TrimSpace(c.PostForm("username"))
 	password := c.PostForm("password")
+	key := failKey(c, username)
+	if h.tooManyFails(c, key, loginMaxFails, loginFailWindow, "登录失败次数过多，请 15 分钟后再试") {
+		h.logLoginRecord(c, model.LogLoginFail, username, "登录失败：失败次数过多，已限流")
+		return
+	}
 	if username == "" || password == "" {
 		h.logLoginRecord(c, model.LogLoginFail, username, "登录失败：用户名或密码为空")
 		badRequest(c, "用户名或密码错误")
@@ -63,11 +68,13 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 	var user model.User
 	if err := h.db.Preload("Org").Where("username = ?", username).First(&user).Error; err != nil {
+		h.rateLimit.addFail(key)
 		h.logLoginRecord(c, model.LogLoginFail, username, "登录失败：用户不存在")
 		badRequest(c, "用户名或密码错误")
 		return
 	}
 	if !user.CheckPassword(password) {
+		h.rateLimit.addFail(key)
 		h.logLoginRecord(c, model.LogLoginFail, username, "登录失败：密码错误")
 		badRequest(c, "用户名或密码错误")
 		return
@@ -77,7 +84,8 @@ func (h *Handler) Login(c *gin.Context) {
 		forbidden(c, "账号已停用，请联系管理员")
 		return
 	}
-	token, err := h.auth.CreateToken(user.ID)
+	h.rateLimit.clear(key)
+	token, err := h.auth.CreateToken(user.ID, user.TokenVersion)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, "生成令牌失败")
 		return
@@ -147,12 +155,19 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "设置密码失败")
 		return
 	}
+	user.RevokeTokens() // 旧令牌全部失效（其它设备需重新登录）
 	if err := h.db.Save(&user).Error; err != nil {
 		fail(c, http.StatusInternalServerError, "保存密码失败")
 		return
 	}
+	h.auth.InvalidateUser(user.ID)
+	out := gin.H{"ok": true}
+	// 为当前设备换发新令牌，避免刚改完密码就被踢下线；换发失败不影响密码已生效
+	if newToken, terr := h.auth.CreateToken(user.ID, user.TokenVersion); terr == nil {
+		out["access_token"] = newToken
+	}
 	h.logRecord(c, model.LogPasswordChange, "user", user.ID, "修改密码："+user.Username)
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	c.JSON(http.StatusOK, out)
 }
 
 // UpdateProfile PATCH /api/auth/profile 自助修改昵称（所有登录用户）
@@ -181,6 +196,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		return
 	}
 	h.logRecord(c, model.LogProfileUpdate, "user", user.ID, "修改昵称："+user.Username)
+	h.auth.InvalidateUser(user.ID) // 缓存中的昵称立即失效，操作日志不会还记旧昵称
 	c.JSON(http.StatusOK, toUserOut(&user))
 }
 
@@ -238,8 +254,13 @@ func (h *Handler) UpdateSecurity(c *gin.Context) {
 // UploadAvatar POST /api/auth/avatar 上传头像（所有登录用户，multipart 字段 file）
 func (h *Handler) UploadAvatar(c *gin.Context) {
 	ctx := currentUser(c)
+	limitUploadBody(c, maxAvatarSize)
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
+		if isBodyTooLarge(err) {
+			badRequest(c, "头像大小不能超过 2MB")
+			return
+		}
 		badRequest(c, "未接收到文件或文件字段名应为 file")
 		return
 	}
@@ -264,7 +285,24 @@ func (h *Handler) UploadAvatar(c *gin.Context) {
 	storedName := fmt.Sprintf("%d_%d%s", ctx.ID, time.Now().UnixNano(), ext)
 	dest := filepath.Join(dir, storedName)
 	if err := c.SaveUploadedFile(header, dest); err != nil {
+		os.Remove(dest)
+		if isBodyTooLarge(err) {
+			badRequest(c, "头像大小不能超过 2MB")
+			return
+		}
 		fail(c, http.StatusInternalServerError, "保存头像失败")
+		return
+	}
+	// header.Size 是客户端声明值；以磁盘实际写入大小为准再校验一次
+	info, statErr := os.Stat(dest)
+	if statErr != nil {
+		os.Remove(dest)
+		fail(c, http.StatusInternalServerError, "保存头像失败")
+		return
+	}
+	if info.Size() > maxAvatarSize {
+		os.Remove(dest)
+		badRequest(c, "头像大小不能超过 2MB")
 		return
 	}
 
@@ -315,12 +353,18 @@ func (h *Handler) ForgotQuestion(c *gin.Context) {
 		return
 	}
 	username := strings.TrimSpace(req.Username)
+	key := failKey(c, username)
+	if h.tooManyFails(c, key, resetMaxFails, resetFailWindow, "操作过于频繁，请 30 分钟后再试或直接联系管理员重置密码") {
+		return
+	}
 	var user model.User
 	if err := h.db.Where("username = ?", username).First(&user).Error; err != nil {
+		h.rateLimit.addFail(key)
 		// 不泄露用户是否存在，统一返回
 		c.JSON(http.StatusOK, gin.H{"security_question": "", "password_hint": ""})
 		return
 	}
+	h.rateLimit.clear(key)
 	c.JSON(http.StatusOK, gin.H{
 		"security_question": user.SecurityQuestion,
 		"password_hint":     user.PasswordHint,
@@ -330,9 +374,9 @@ func (h *Handler) ForgotQuestion(c *gin.Context) {
 // ForgotReset POST /api/auth/forgot-reset 找回密码第二步：校验安全答案并重置密码（公开）
 func (h *Handler) ForgotReset(c *gin.Context) {
 	var req struct {
-		Username        string `json:"username" binding:"required"`
-		SecurityAnswer  string `json:"security_answer" binding:"required"`
-		NewPassword     string `json:"new_password" binding:"required"`
+		Username       string `json:"username" binding:"required"`
+		SecurityAnswer string `json:"security_answer" binding:"required"`
+		NewPassword    string `json:"new_password" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		badRequest(c, "参数不合法："+err.Error())
@@ -343,23 +387,33 @@ func (h *Handler) ForgotReset(c *gin.Context) {
 		return
 	}
 	username := strings.TrimSpace(req.Username)
+	key := failKey(c, username)
+	if h.tooManyFails(c, key, resetMaxFails, resetFailWindow, "尝试次数过多，请 30 分钟后再试或直接联系管理员重置密码") {
+		return
+	}
 	var user model.User
 	if err := h.db.Where("username = ?", username).First(&user).Error; err != nil {
-		badRequest(c, "用户名不存在")
+		h.rateLimit.addFail(key)
+		// 与「答案错误」使用同一文案，不泄露账号是否存在
+		badRequest(c, "用户名或安全答案错误")
 		return
 	}
 	if user.SecurityQuestion == "" || !user.CheckSecurityAnswer(req.SecurityAnswer) {
-		badRequest(c, "安全答案错误")
+		h.rateLimit.addFail(key)
+		badRequest(c, "用户名或安全答案错误")
 		return
 	}
 	if err := user.SetPassword(req.NewPassword); err != nil {
 		fail(c, http.StatusInternalServerError, "设置密码失败")
 		return
 	}
+	user.RevokeTokens() // 重置成功后使旧令牌全部失效
 	if err := h.db.Save(&user).Error; err != nil {
 		fail(c, http.StatusInternalServerError, "保存密码失败")
 		return
 	}
+	h.rateLimit.clear(key)
+	h.auth.InvalidateUser(user.ID)
 	h.logRecord(c, model.LogPasswordReset, "user", user.ID, "安全问答重置密码："+user.Username)
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
