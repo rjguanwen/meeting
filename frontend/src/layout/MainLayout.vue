@@ -50,7 +50,7 @@
         <div class="page-title">{{ pageTitle }}</div>
         <el-dropdown @command="onCommand">
           <span class="user-info">
-            <el-avatar :size="30" :src="avatarUrl(auth.user?.avatar)" class="avatar">{{ avatarText }}</el-avatar>
+            <el-avatar :size="30" :src="avatarUrl(auth.user?.avatar)" class="avatar" @error="avatarLoadFailed">{{ avatarText }}</el-avatar>
             <span class="name">{{ auth.user?.name || auth.user?.username }}</span>
             <el-tag size="small" :type="auth.isAdmin ? 'danger' : 'success'">
               {{ roleText }}
@@ -105,6 +105,10 @@ const auth = useAuthStore()
 
 const pageTitle = computed(() => route.meta.title || '')
 const avatarText = computed(() => (auth.user?.name || auth.user?.username || '?').charAt(0))
+// 头像文件读不到时回到首字母占位，不留浏览器破图
+function avatarLoadFailed() {
+  return true
+}
 
 const roleText = computed(() => {
   const m = {

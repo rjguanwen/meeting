@@ -4,7 +4,7 @@
       <template #header>个人资料</template>
       <div class="avatar-row">
         <div class="avatar-box">
-          <el-avatar :size="80" :src="avatarUrl(auth.user?.avatar)" class="avatar">
+          <el-avatar :size="80" :src="avatarUrl(auth.user?.avatar)" class="avatar" @error="avatarLoadFailed">
             {{ avatarText }}
           </el-avatar>
           <el-button size="small" class="avatar-btn" @click="cropperVisible = true">更换头像</el-button>
@@ -86,7 +86,7 @@
     </el-card>
 
     <!-- 头像裁剪弹窗 -->
-    <el-dialog v-model="cropperVisible" title="更换头像" width="420px" destroy-on-close>
+    <el-dialog v-model="cropperVisible" title="更换头像" width="460px" destroy-on-close>
       <AvatarCropper ref="cropperRef" @confirm="onCropped" />
       <template #footer>
         <el-button @click="cropperVisible = false">取消</el-button>
@@ -113,6 +113,10 @@ const presetQuestions = [
 ]
 
 const avatarText = computed(() => (auth.user?.name || auth.user?.username || '?').charAt(0))
+// 头像文件读不到时（例如服务器 uploads/avatars 被清理）回到首字母占位，不留浏览器破图
+function avatarLoadFailed() {
+  return true
+}
 const roleText = computed(() => {
   const m = { admin: '管理员', dept_leader: '部门负责人', team_leader: '小组负责人', member: '组织成员' }
   return m[auth.user?.role] || '组织用户'

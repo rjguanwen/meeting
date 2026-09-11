@@ -13,10 +13,11 @@ import (
 	"meetingbackend/internal/model"
 )
 
-const (
-	maxAvatarSize      = 2 * 1024 * 1024 // 头像上限 2MB
-	avatarExtWhitelist = ".jpg,.jpeg,.png,.webp"
-)
+const maxAvatarSize = 2 * 1024 * 1024 // 头像上限 2MB（上传的是前端裁剪后的 256px 小图，实际几十到几百 KB）
+
+// avatarExts 头像允许的扩展名。用精确集合而不是“拼接后 Contains”：
+// 后者会把 "." 以及 ".web"、".jpe" 这类子串当成合法扩展名放行。
+var avatarExts = map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".webp": true}
 
 // UserOut 用户输出（头像为公开信息，供列表/材料展示）
 type UserOut struct {
@@ -271,7 +272,7 @@ func (h *Handler) UploadAvatar(c *gin.Context) {
 		return
 	}
 	ext := strings.ToLower(filepath.Ext(header.Filename))
-	if !strings.Contains(avatarExtWhitelist, ext) {
+	if !avatarExts[ext] {
 		badRequest(c, "头像仅支持 jpg / jpeg / png / webp 格式")
 		return
 	}

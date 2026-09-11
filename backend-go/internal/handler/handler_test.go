@@ -699,6 +699,96 @@ func TestDeptLeaderMeetingScope(t *testing.T) {
 	}
 }
 
+// pngBytes PNG 文件头。后端不解析像素，只看扩展名与大小，所以无需一张真图。
+var pngBytes = []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}
+
+// uploadAvatar 以当前 token 发送 multipart 头像上传。
+func (e *testEnv) uploadAvatar(t *testing.T, filename string, content []byte) (int, string) {
+	t.Helper()
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("file", filename)
+	if err != nil {
+		t.Fatalf("form file: %v", err)
+	}
+	if _, err := fw.Write(content); err != nil {
+		t.Fatalf("write content: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/avatar", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", e.token)
+	w := httptest.NewRecorder()
+	e.router.ServeHTTP(w, req)
+	var out map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &out)
+	detail, _ := out["detail"].(string)
+	return w.Code, detail
+}
+
+// TestUploadAvatarFlow 头像上传闭环：能存能读、换图后旧文件被清理、会话仍然有效、非法扩展名被拒。
+func TestUploadAvatarFlow(t *testing.T) {
+	e := newEnv(t)
+
+	code, detail := e.uploadAvatar(t, "avatar.png", pngBytes)
+	if code != http.StatusOK {
+		t.Fatalf("上传 PNG 头像期望 200，实际 %d：%s", code, detail)
+	}
+	avatarOf := func() string {
+		t.Helper()
+		var user model.User
+		if err := e.db.First(&user, 1).Error; err != nil {
+			t.Fatalf("load user: %v", err)
+		}
+		return user.Avatar
+	}
+	first := avatarOf()
+	if !strings.HasPrefix(first, "1_") || !strings.HasSuffix(first, ".png") {
+		t.Fatalf("头像存储命名不符合预期：%q", first)
+	}
+	stored := filepath.Join(e.cfg.UploadDir, "avatars", first)
+	if _, err := os.Stat(stored); err != nil {
+		t.Fatalf("头像文件未落盘：%v", err)
+	}
+
+	// 读取接口公开可用（无 token）
+	if w := e.do(t, "", http.MethodGet, "/api/avatar/"+first, nil); w.Code != http.StatusOK || w.Body.Len() == 0 {
+		t.Fatalf("读取头像期望 200 且非空，实际 %d / %d 字节", w.Code, w.Body.Len())
+	}
+	// 上传后缓存失效不应误伤当前会话（否则用户传完头像就被踢）
+	if code, _ := e.jsonReqAs(t, e.token, http.MethodGet, "/api/auth/me", nil); code != http.StatusOK {
+		t.Fatalf("上传头像后 /auth/me 期望 200，实际 %d", code)
+	}
+
+	// 再传一次：新文件写入、旧文件删除，不留垃圾
+	time.Sleep(2 * time.Millisecond)
+	if code, detail := e.uploadAvatar(t, "avatar.png", pngBytes); code != http.StatusOK {
+		t.Fatalf("替换头像期望 200，实际 %d：%s", code, detail)
+	}
+	second := avatarOf()
+	if second == first {
+		t.Fatalf("替换后头像文件名未变：%q", second)
+	}
+	if _, err := os.Stat(filepath.Join(e.cfg.UploadDir, "avatars", second)); err != nil {
+		t.Fatalf("新头像未落盘：%v", err)
+	}
+	if _, err := os.Stat(stored); !os.IsNotExist(err) {
+		t.Fatalf("旧头像应被删除，实际仍在：%v", err)
+	}
+
+	// 扩展名校验：旧的“拼接后 Contains”写法会放行 .web / .jpe 这类子串
+	for _, name := range []string{"evil.web", "evil.jpe", "page.html", "noext"} {
+		if code, _ := e.uploadAvatar(t, name, pngBytes); code != http.StatusBadRequest {
+			t.Fatalf("上传 %s 期望 400，实际 %d", name, code)
+		}
+	}
+	if n := countRows(e.db, "users", "1 = 1"); n != 1 {
+		t.Fatalf("失败请求不应影响数据，当前用户数 %d", n)
+	}
+}
+
 func mustToken(t *testing.T, auth *middleware.Auth, userID uint, version int) string {
 	t.Helper()
 	token, err := auth.CreateToken(userID, version)
